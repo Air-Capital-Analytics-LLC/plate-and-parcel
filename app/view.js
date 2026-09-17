@@ -155,7 +155,7 @@ export function counts(state, storeId) {
 export function tabsHTML(state) {
   return STORES.map((s) => {
     const c = counts(state, s.id);
-    return `<button class="tab${state.ui.store === s.id ? ' on' : ''}" data-store="${s.id}">`
+    return `<button class="pxl tab${state.ui.store === s.id ? ' on' : ''}" data-store="${s.id}">`
       + `${esc(s.short)}<span class="n">${c.done}/${c.total}</span></button>`;
   }).join('');
 }
@@ -246,9 +246,9 @@ export function itemHTML(item, state, opts = {}) {
     + `<div class="nm">${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${whoTag}${stepper}${removeBtn}</div>`
     + body + flagRow
     + `<div class="acts" role="group" aria-label="${esc(text)}">`
-    + `<button class="${st === 'got' ? 'on-got' : ''}" data-act="got" aria-pressed="${st === 'got'}">Got</button>`
-    + `<button class="${st === 'swap' ? 'on-swap' : ''}" data-act="swap" aria-pressed="${st === 'swap'}">Swap</button>`
-    + `<button class="${st === 'skip' ? 'on-skip' : ''}" data-act="skip" aria-pressed="${st === 'skip'}">Skip</button>`
+    + `<button class="pxl ${st === 'got' ? 'on-got' : ''}" data-act="got" aria-pressed="${st === 'got'}">Got</button>`
+    + `<button class="pxl ${st === 'swap' ? 'on-swap' : ''}" data-act="swap" aria-pressed="${st === 'swap'}">Swap</button>`
+    + `<button class="pxl ${st === 'skip' ? 'on-skip' : ''}" data-act="skip" aria-pressed="${st === 'skip'}">Skip</button>`
     + `</div>${noteRow}</div>`;
 }
 

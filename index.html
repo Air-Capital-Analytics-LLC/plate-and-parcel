@@ -66,6 +66,13 @@
   --danger:#ff9c9c;
 
   --tab-dim:.82;
+
+  /* PIXEL BEVEL. Overlays rather than fixed colours, so one set of three works
+     over any fill - a grey tab, a green Got button, either theme. */
+  --bevel-hi:rgba(255,255,255,.26);
+  --bevel-lo:rgba(0,0,0,.50);
+  --bevel-edge:#0b0d14;
+
   --radius:14px;
 }
 
@@ -92,6 +99,10 @@ html[data-theme="light"]{
   --badge-ok:#1c6e2c; --badge-warn:#7d5200; --badge-bad:#a81f1f;
   --danger:#a81f1f;
   --tab-dim:.94;
+
+  --bevel-hi:rgba(255,255,255,.98);
+  --bevel-lo:rgba(23,25,34,.28);
+  --bevel-edge:#aeb6c8;
 }
 *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
 /* TEXT SIZE LIVES HERE, ON html, AND NOWHERE ELSE.
@@ -113,13 +124,13 @@ body{
    below - and somebody asking for bigger text wants a bigger LIST, not a bigger
    app name eating the header it sits in. Sizing it in rem clipped it to
    "Plate & Par..." at Large on a 360px phone. */
-h1{font-size:clamp(15px, 4.2vw, 19px); display:flex; align-items:center; gap:7px;}
+h1{font-size:clamp(14px, 4vw, 19px); display:flex; align-items:center; gap:6px;}
 /* Sized in em so it tracks the title rather than the text-size setting. It is
    decorative - the title next to it already says the name - so alt is empty. */
-.hrow h1 .logo{width:1.35em; height:1.35em; border-radius:6px; flex-shrink:0; object-fit:contain;}
+.hrow h1 .logo{width:38px; height:38px; border-radius:9px; flex-shrink:0; object-fit:contain;}
 /* Below ~340px (iPhone SE 1st gen and older) the header genuinely runs out of
    room. The badge stays - it is the honest sync signal - and the emoji goes. */
-@media (max-width:339px){ .hrow h1 .logo{display:none;} }
+@media (max-width:339px){ .hrow h1{font-size:0; gap:0;} .hrow h1 .logo{font-size:1rem;} }
 button{font-family:inherit; cursor:pointer; border:none; color:var(--ink); background:var(--panel2); border-radius:10px;}
 button:active{transform:scale(.97);}
 button:focus-visible,[data-id] button:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
@@ -129,32 +140,34 @@ input,textarea{font-family:inherit; font-size:max(16px,1rem); width:100%; color:
 
 header{position:sticky; top:0; z-index:30; background:var(--bg);
   padding:calc(10px + env(safe-area-inset-top)) 0 8px; border-bottom:1px solid var(--line); margin-bottom:10px;}
-.hrow{display:flex; align-items:center; gap:5px; margin-bottom:8px;}
+.hrow{display:flex; align-items:center; gap:4px; margin-bottom:8px;}
 .hrow h1{flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .iconbtn{width:38px; height:38px; font-size:1.02rem; flex-shrink:0; display:grid; place-items:center;}
 /* Every header button carries a word, because an icon alone is a guess. These
    are sized in px, not rem: the text-size control must not grow with its own
    setting - the header would reflow under the thumb still pressing it - and the
    row has to stay a fixed height whatever the list is doing. */
-.sizebtn{flex-shrink:0; min-height:38px; padding:2px 7px; display:grid; place-items:center;
+.sizebtn{flex-shrink:0; min-height:38px; padding:2px 6px; display:grid; place-items:center;
   line-height:1.08; gap:1px;}
 .sizebtn .aa{font-size:15px; font-weight:700; color:var(--ink);}
 .sizebtn .lbl{font-size:9px; letter-spacing:.02em; color:var(--muted); white-space:nowrap;}
 .sizebtn.set .aa{color:var(--accent-ink);}
-.badge{font-size:.64rem; padding:4px 7px; border-radius:7px; background:var(--panel2); color:var(--muted); white-space:nowrap; flex-shrink:0;}
+.badge{font-size:clamp(10px, .64rem, 12.5px); padding:4px 7px; border-radius:7px; background:var(--panel2); color:var(--muted); white-space:nowrap; flex-shrink:0;}
 .badge.ok{color:var(--badge-ok);} .badge.warn{color:var(--badge-warn);} .badge.bad{color:var(--badge-bad);}
 .tabs{display:flex; gap:6px;}
-.tab{flex:1; padding:10px 4px; font-size:.82rem; font-weight:600; text-align:center;
-  background:var(--panel2); color:var(--muted); border:1px solid transparent; line-height:1.25;}
+.tab{flex:1; padding:11px 4px; font-size:.82rem; font-weight:600; text-align:center;
+  --fill:var(--panel2); color:var(--muted); line-height:1.25;}
 .tab .n{display:block; font-size:.68rem; font-weight:500; opacity:.92; margin-top:1px;}
 .tab{opacity:var(--tab-dim);}
 .tab[data-store="sams"]{color:var(--sams);}
 .tab[data-store="costco"]{color:var(--costco);}
 .tab[data-store="custom"]{color:var(--custom);}
-.tab.on{background:var(--panel); opacity:1; font-weight:700; border-width:2px;}
-.tab.on[data-store="sams"]{border-color:var(--sams);}
-.tab.on[data-store="costco"]{border-color:var(--costco);}
-.tab.on[data-store="custom"]{border-color:var(--custom);}
+.tab.on{--fill:var(--panel); opacity:1; font-weight:700;}
+/* The selected tab's outline takes the shop's colour, which is the job the
+   border used to do before clip-path made borders unusable here. */
+.tab.on[data-store="sams"]{--bevel-edge:var(--sams);}
+.tab.on[data-store="costco"]{--bevel-edge:var(--costco);}
+.tab.on[data-store="custom"]{--bevel-edge:var(--custom);}
 .pbar{height:4px; background:var(--panel2); border-radius:2px; margin-top:8px; overflow:hidden;}
 .pbar>div{height:100%; background:var(--got); width:0; transition:width .25s;}
 .pmeta{display:flex; justify-content:space-between; font-size:.72rem; color:var(--muted); margin-top:5px;}
@@ -179,10 +192,11 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .why{font-size:.76rem; color:var(--muted); margin-top:3px;}
 .getat{font-size:.76rem; color:var(--custom); margin-top:3px; font-weight:600;}
 .acts{display:flex; gap:6px; margin-top:9px;}
-.acts button{flex:1; padding:11px 4px; font-size:.82rem; font-weight:600; color:var(--muted);}
-.acts button.on-got{background:var(--got); color:var(--on-got);}
-.acts button.on-swap{background:var(--swap); color:var(--on-swap);}
-.acts button.on-skip{background:var(--skip); color:var(--on-skip);}
+.acts button{flex:1; padding:12px 4px; font-size:.82rem; font-weight:600; color:var(--muted);
+  --fill:var(--panel2);}
+.acts button.on-got{--fill:var(--got); color:var(--on-got);}
+.acts button.on-swap{--fill:var(--swap); color:var(--on-swap);}
+.acts button.on-skip{--fill:var(--skip); color:var(--on-skip);}
 .noteline{margin-top:8px; font-size:.78rem; color:var(--muted); background:var(--panel2);
   border-radius:9px; padding:8px 10px; cursor:pointer;}
 .noteline b{color:var(--ink); font-weight:600;}
@@ -263,6 +277,64 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   padding:10px 16px; border-radius:12px; opacity:0; transition:opacity .28s; pointer-events:none; z-index:70; max-width:88vw; text-align:center;}
 #toast.show{opacity:1;}
 @media (prefers-reduced-motion:reduce){*{transition:none !important;} button:active{transform:none;}}
+
+/* ============================ PIXEL BEVEL ============================
+   A modernised take on the 16-bit button: stepped corners instead of a
+   radius, a lit top-left edge, a shaded bottom-right, and a hard outline.
+   Pressing inverts the bevel and nudges the button a pixel, which is how
+   those buttons actually behaved.
+
+   Built out of the existing tokens - no new palette, no images, no font
+   change. The retro cue is the SHAPE and the LIGHTING, never the type: the
+   people this is for need the text legible more than they need it charming.
+
+   Structure, and why it needs two layers: `clip-path` clips borders and
+   outlines away with everything else, so the outline cannot be a border. The
+   element's own background paints the outline, and ::before - inset by one
+   pixel-unit, carrying the fill and the bevel - sits on top of it. z-index:-1
+   inside an isolated stacking context paints above the parent's background but
+   below the text, which is exactly the sandwich required. */
+.pxl{
+  --px:3px;
+  position:relative; isolation:isolate;
+  border:none; border-radius:0;
+  background:var(--bevel-edge);
+  -webkit-clip-path:var(--pxl-shape); clip-path:var(--pxl-shape);
+}
+.pxl::before{
+  content:''; position:absolute; inset:var(--px); z-index:-1;
+  background:var(--fill,var(--panel2));
+  -webkit-clip-path:var(--pxl-shape); clip-path:var(--pxl-shape);
+  box-shadow:inset var(--px) var(--px) 0 0 var(--bevel-hi),
+             inset calc(-1 * var(--px)) calc(-1 * var(--px)) 0 0 var(--bevel-lo);
+}
+/* Pressed: the light comes from the other side and the cap sinks. Replaces the
+   global scale(.97), which reads as "web button" rather than "switch". */
+.pxl:active{transform:translate(1px,1px);}
+.pxl:active::before{
+  box-shadow:inset var(--px) var(--px) 0 0 var(--bevel-lo),
+             inset calc(-1 * var(--px)) calc(-1 * var(--px)) 0 0 var(--bevel-hi);
+}
+/* The focus ring has to move inside: an outline outside the box is clipped
+   away by clip-path, so keyboard focus would become invisible. */
+.pxl:focus-visible{outline:none;}
+.pxl:focus-visible::before{
+  box-shadow:inset 0 0 0 var(--px) var(--accent),
+             inset var(--px) var(--px) 0 0 var(--bevel-hi),
+             inset calc(-1 * var(--px)) calc(-1 * var(--px)) 0 0 var(--bevel-lo);
+}
+:root{
+  --pxl-shape:polygon(
+    6px 0%, calc(100% - 6px) 0%,
+    calc(100% - 6px) 3px, calc(100% - 3px) 3px,
+    calc(100% - 3px) 6px, 100% 6px,
+    100% calc(100% - 6px), calc(100% - 3px) calc(100% - 6px),
+    calc(100% - 3px) calc(100% - 3px), calc(100% - 6px) calc(100% - 3px),
+    calc(100% - 6px) 100%, 6px 100%,
+    6px calc(100% - 3px), 3px calc(100% - 3px),
+    3px calc(100% - 6px), 0% calc(100% - 6px),
+    0% 6px, 3px 6px, 3px 3px, 6px 3px);
+}
 
 /* ---- welcome ---- */
 .wel-head{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
