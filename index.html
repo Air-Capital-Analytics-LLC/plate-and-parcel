@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Plate & Parcel">
 <meta name="theme-color" content="#12141c">
 <meta name="robots" content="noindex, nofollow">
@@ -13,20 +13,85 @@
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
 <link rel="icon" type="image/png" href="./favicon.png">
+<script>
+/* Runs BEFORE the first paint, on purpose, and is inline for the same reason:
+   an external file is a network round trip, and a phone that prefers light
+   would spend it staring at a dark screen. Resolves auto -> a concrete value so
+   the stylesheet only ever needs one selector. Never throws: private mode makes
+   localStorage itself throw on read, and a theme is not worth a blank app. */
+(function () {
+  var DARK = '#12141c', LIGHT = '#f2f4f8';
+  var t;
+  try { t = localStorage.getItem('pnp.theme'); } catch (e) { t = null; }
+  if (t !== 'light' && t !== 'dark') {
+    t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches)
+      ? 'light' : 'dark';
+  }
+  document.documentElement.setAttribute('data-theme', t);
+  var m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', t === 'light' ? LIGHT : DARK);
+})();
+</script>
 <style>
 :root{
+  /* SURFACES */
   --bg:#12141c; --panel:#1b1e2b; --panel2:#232739; --line:#333a52;
   --ink:#e8e9f0; --muted:#9aa0b4;
-  --accent:#ffd43b; --got:#69db7c; --swap:#4dabf7; --skip:#ff6b6b;
+  --shadow:rgba(0,0,0,.55);
+
+  /* BRAND. --accent is the FILL, which stays bright in both themes so the ink
+     on it stays dark. --accent-ink is the same colour used as TEXT, which has
+     to go darker on a light background or it disappears. Splitting those two
+     is what makes light mode a data change instead of a rewrite. */
+  --accent:#ffd43b; --accent-ink:#ffd43b; --on-accent:#1b1e2b;
+
+  /* STATUS: the fill, and the ink that sits on that fill. */
+  --got:#69db7c; --on-got:#10240f;
+  --swap:#4dabf7; --on-swap:#06243d;
+  --skip:#ff6b6b; --on-skip:#3d0a0a;
+
   /* One colour per store, roughly the colour of the sign over the door, so the
-     tab you want is findable without reading it. Lighter than the status
-     colours above on purpose: a tab is chrome, a status is the answer. */
-  --sams:#74c0fc; --costco:#ffa8a8; --custom:#63e6be;
+     tab you want is findable without reading it. */
+  --sams:#74c0fc; --costco:#ffb3b3; --custom:#63e6be;
+
   /* Planning is a different ACTIVITY from shopping - deciding what to buy
      rather than buying it - so it gets its own colour rather than another
      yellow thing to tell apart from the yellow things. */
-  --plan:#b197fc;
+  --plan:#b197fc; --plan-ink:#b197fc; --on-plan:#1b1e2b;
+
+  /* CHIPS AND NOTICES */
+  --frozen-bg:#1d3a5c; --frozen-ink:#9ed0ff;
+  --warn-bg:#3a2a12; --warn-line:#6b4a1a; --warn-ink:#ffd8a8; --warn-strong:#ffc078;
+  --badge-ok:#9fe3ae; --badge-warn:#ffd88a; --badge-bad:#ff9ec4;
+  --danger:#ff9c9c;
+
+  --tab-dim:.82;
   --radius:14px;
+}
+
+/* LIGHT. Only the tokens change - not one rule below this block knows which
+   theme it is in. `data-theme` is written by the inline script in <head> before
+   the first paint, so a light-preferring phone never flashes dark at its owner. */
+html[data-theme="light"]{
+  --bg:#f2f4f8; --panel:#ffffff; --panel2:#e7eaf1; --line:#c9cfdd;
+  --ink:#171922; --muted:#4d5464;
+  --shadow:rgba(20,25,40,.20);
+
+  --accent:#ffd43b; --accent-ink:#7a5c00; --on-accent:#2a2200;
+
+  --got:#2f9e44; --on-got:#ffffff;
+  --swap:#1971c2; --on-swap:#ffffff;
+  --skip:#e03131; --on-skip:#ffffff;
+
+  --sams:#1263ab; --costco:#a31f1f; --custom:#04543f;
+
+  --plan:#7048e8; --plan-ink:#5f3dc4; --on-plan:#ffffff;
+
+  --frozen-bg:#d0ebff; --frozen-ink:#1864ab;
+  --warn-bg:#fff4e0; --warn-line:#ffd8a8; --warn-ink:#8a5a00; --warn-strong:#a04a00;
+  --badge-ok:#1c6e2c; --badge-warn:#7d5200; --badge-bad:#a81f1f;
+  --danger:#a81f1f;
+  --tab-dim:.94;
 }
 *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
 /* TEXT SIZE LIVES HERE, ON html, AND NOWHERE ELSE.
@@ -75,18 +140,18 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
   line-height:1.08; gap:1px;}
 .sizebtn .aa{font-size:15px; font-weight:700; color:var(--ink);}
 .sizebtn .lbl{font-size:9px; letter-spacing:.02em; color:var(--muted); white-space:nowrap;}
-.sizebtn.set .aa{color:var(--accent);}
+.sizebtn.set .aa{color:var(--accent-ink);}
 .badge{font-size:.64rem; padding:4px 7px; border-radius:7px; background:var(--panel2); color:var(--muted); white-space:nowrap; flex-shrink:0;}
-.badge.ok{color:#9fe3ae;} .badge.warn{color:#ffd88a;} .badge.bad{color:#ff9ec4;}
+.badge.ok{color:var(--badge-ok);} .badge.warn{color:var(--badge-warn);} .badge.bad{color:var(--badge-bad);}
 .tabs{display:flex; gap:6px;}
 .tab{flex:1; padding:10px 4px; font-size:.82rem; font-weight:600; text-align:center;
   background:var(--panel2); color:var(--muted); border:1px solid transparent; line-height:1.25;}
-.tab .n{display:block; font-size:.68rem; font-weight:500; opacity:.8; margin-top:1px;}
-.tab{opacity:.66;}
+.tab .n{display:block; font-size:.68rem; font-weight:500; opacity:.92; margin-top:1px;}
+.tab{opacity:var(--tab-dim);}
 .tab[data-store="sams"]{color:var(--sams);}
 .tab[data-store="costco"]{color:var(--costco);}
 .tab[data-store="custom"]{color:var(--custom);}
-.tab.on{background:var(--panel); opacity:1;}
+.tab.on{background:var(--panel); opacity:1; font-weight:700; border-width:2px;}
 .tab.on[data-store="sams"]{border-color:var(--sams);}
 .tab.on[data-store="costco"]{border-color:var(--costco);}
 .tab.on[data-store="custom"]{border-color:var(--custom);}
@@ -95,8 +160,8 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .pmeta{display:flex; justify-content:space-between; font-size:.72rem; color:var(--muted); margin-top:5px;}
 
 .sec{margin:18px 0 7px; display:flex; align-items:center; justify-content:space-between; gap:8px;
-  background:var(--panel); border-left:3px solid var(--accent); border-radius:8px; padding:7px 11px;}
-.sec b{font-size:.84rem; letter-spacing:.08em; text-transform:uppercase; color:var(--accent);}
+  background:var(--panel); border-left:3px solid var(--accent-ink); border-radius:8px; padding:7px 11px;}
+.sec b{font-size:.84rem; letter-spacing:.08em; text-transform:uppercase; color:var(--accent-ink);}
 .sec span{font-size:.72rem; color:var(--muted); flex-shrink:0;}
 .item{background:var(--panel); border-radius:var(--radius); padding:11px 12px; margin-bottom:8px; border-left:3px solid transparent;}
 .item.got{border-left-color:var(--got); opacity:.55;}
@@ -105,19 +170,19 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .item.cust{border-left-color:var(--custom);}
 .item.got .nm,.item.skip .nm{text-decoration:line-through;}
 .nm{font-weight:600; font-size:.97rem; margin-bottom:2px; display:flex; align-items:center; flex-wrap:wrap; gap:5px;}
-.frozen{font-size:.6rem; background:#1d3a5c; color:#9ed0ff; border-radius:5px; padding:2px 6px; letter-spacing:.05em;}
+.frozen{font-size:.6rem; background:var(--frozen-bg); color:var(--frozen-ink); border-radius:5px; padding:2px 6px; letter-spacing:.05em;}
 .who{font-size:.6rem; background:var(--panel2); color:var(--muted); border-radius:5px; padding:2px 6px; font-weight:500;}
 .rm{margin-left:auto; width:26px; height:26px; font-size:1rem; line-height:1; color:var(--muted); background:transparent;}
 .det{font-size:.8rem; color:var(--muted);}
-.det .price{color:var(--accent); font-weight:600;}
+.det .price{color:var(--accent-ink); font-weight:600;}
 .alt{font-size:.74rem; color:var(--muted); margin-top:3px; opacity:.85;}
 .why{font-size:.76rem; color:var(--muted); margin-top:3px;}
 .getat{font-size:.76rem; color:var(--custom); margin-top:3px; font-weight:600;}
 .acts{display:flex; gap:6px; margin-top:9px;}
 .acts button{flex:1; padding:11px 4px; font-size:.82rem; font-weight:600; color:var(--muted);}
-.acts button.on-got{background:var(--got); color:#10240f;}
-.acts button.on-swap{background:var(--swap); color:#06243d;}
-.acts button.on-skip{background:var(--skip); color:#3d0a0a;}
+.acts button.on-got{background:var(--got); color:var(--on-got);}
+.acts button.on-swap{background:var(--swap); color:var(--on-swap);}
+.acts button.on-skip{background:var(--skip); color:var(--on-skip);}
 .noteline{margin-top:8px; font-size:.78rem; color:var(--muted); background:var(--panel2);
   border-radius:9px; padding:8px 10px; cursor:pointer;}
 .noteline b{color:var(--ink); font-weight:600;}
@@ -125,8 +190,8 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .empty{text-align:center; color:var(--muted); font-size:.85rem; padding:34px 14px; line-height:1.6;}
 
 .fab{position:fixed; right:14px; bottom:calc(14px + env(safe-area-inset-bottom));
-  width:56px; height:56px; border-radius:50%; background:var(--accent); color:#1b1e2b;
-  font-size:1.8rem; font-weight:700; box-shadow:0 5px 16px rgba(0,0,0,.55); z-index:35;}
+  width:56px; height:56px; border-radius:50%; background:var(--accent); color:var(--on-accent);
+  font-size:1.8rem; font-weight:700; box-shadow:0 5px 16px var(--shadow); z-index:35;}
 .fab2{position:fixed; left:14px; bottom:calc(14px + env(safe-area-inset-bottom));
   height:46px; padding:0 16px; border-radius:23px; background:var(--panel2);
   border:1px solid var(--line); font-size:.83rem; font-weight:600; z-index:35;}
@@ -134,24 +199,25 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .sheet-bg.open{display:flex;}
 .sheet{background:var(--panel); width:100%; max-width:560px; border-radius:20px 20px 0 0;
   padding:18px 16px calc(20px + env(safe-area-inset-bottom)); max-height:88vh; overflow-y:auto;}
-.sheet h2{font-size:1.08rem; margin-bottom:12px; color:var(--accent);}
+.sheet h2{font-size:1.08rem; margin-bottom:12px; color:var(--accent-ink);}
 .sheet .fld{margin-bottom:11px;}
 .sheet label{font-size:.75rem; color:var(--muted); display:block; margin-bottom:4px;}
 .sheet .row{display:flex; gap:8px;}
 .sheet .row button{flex:1; padding:13px; font-weight:600;}
 .sheet .wide{width:100%; padding:13px; font-weight:600; text-align:left;}
-.primary{background:var(--accent) !important; color:#1b1e2b !important;}
+.primary{background:var(--accent) !important; color:var(--on-accent) !important;}
 .seg{display:flex; gap:6px;}
 .seg button{flex:1; padding:11px 4px; font-size:.82rem; color:var(--muted);}
-.seg button.on{background:var(--accent); color:#1b1e2b; font-weight:700;}
+.seg button.on{background:var(--accent); color:var(--on-accent); font-weight:700;}
 #report{white-space:pre-wrap; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.76rem; min-height:220px;}
 .hint{font-size:.74rem; color:var(--muted); line-height:1.5; margin-top:8px;}
-.err{font-size:.78rem; color:#ff9ec4; min-height:1.1em; margin-top:6px;}
-.warnbox{background:#3a2a12; border:1px solid #6b4a1a; border-radius:10px; padding:10px 12px;
-  font-size:.76rem; color:#ffd8a8; line-height:1.5; margin-bottom:10px;}
+.danger{color:var(--danger);}
+.err{font-size:.78rem; color:var(--badge-bad); min-height:1.1em; margin-top:6px;}
+.warnbox{background:var(--warn-bg); border:1px solid var(--warn-line); border-radius:10px; padding:10px 12px;
+  font-size:.76rem; color:var(--warn-ink); line-height:1.5; margin-bottom:10px;}
 .listrow{display:flex; align-items:center; gap:8px; margin-bottom:8px; text-align:left;}
 .listrow.on{outline:2px solid var(--accent);}
-.listrow .tag{font-size:.64rem; font-weight:600; background:var(--accent); color:#1b1e2b;
+.listrow .tag{font-size:.64rem; font-weight:600; background:var(--accent); color:var(--on-accent);
   border-radius:5px; padding:2px 6px; margin-left:auto; flex-shrink:0;}
 .listrow .tag.dim{background:var(--panel2); color:var(--muted); margin-left:6px;}
 #newListPreview{word-break:break-all; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.72rem;}
@@ -160,7 +226,7 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
   padding:11px 12px; margin-bottom:10px; font-size:.83rem; color:var(--muted); line-height:1.4;}
 .installbar span{flex:1 1 100%;}
 .installbar button{padding:9px 14px; font-size:.8rem; font-weight:600;
-  background:var(--accent); color:#1b1e2b;}
+  background:var(--accent); color:var(--on-accent);}
 .installbar button.ghost{background:transparent; color:var(--muted); border:1px solid var(--line);}
 #installBody p{font-size:.88rem; line-height:1.55; margin-bottom:10px;}
 #installBody .ok-line{color:var(--got); font-weight:600;}
@@ -172,31 +238,47 @@ ol.steps li{margin-bottom:4px;}
   background:var(--panel2); color:var(--ink); border:1px solid var(--line); padding:0;}
 .qty button:disabled{opacity:.35;}
 .qnum{min-width:26px; text-align:center; font-size:.9rem; font-weight:700; color:var(--ink);}
-.qtybadge{font-size:.66rem; font-weight:700; background:var(--accent); color:#1b1e2b;
+.qtybadge{font-size:.66rem; font-weight:700; background:var(--accent); color:var(--on-accent);
   border-radius:5px; padding:2px 6px;}
 .planbar{width:100%; margin-top:8px; padding:11px; font-size:.95rem; font-weight:700;
-  letter-spacing:.02em; background:var(--panel); color:var(--plan);
-  border:1px solid var(--line); border-left:3px solid var(--plan);}
-.planbar.on{background:var(--plan); color:#1b1e2b; border-color:var(--plan);}
+  letter-spacing:.02em; background:var(--panel); color:var(--plan-ink);
+  border:1px solid var(--line); border-left:3px solid var(--plan-ink);}
+.planbar.on{background:var(--plan); color:var(--on-plan); border-color:var(--plan);}
 body.planning .item{opacity:1;}
 .item.plan{border-left-color:var(--line);}
 .item.plan.picked{border-left-color:var(--plan);}
 .tickbox{display:inline-grid; place-items:center; width:20px; height:20px; flex-shrink:0;
-  border:2px solid var(--line); border-radius:6px; font-size:.8rem; color:#1b1e2b;}
+  border:2px solid var(--line); border-radius:6px; font-size:.8rem; color:var(--on-plan);}
 .item.plan.picked .tickbox{background:var(--plan); border-color:var(--plan);}
 .planbtn{width:100%; margin-top:9px; padding:11px; font-size:.82rem; font-weight:600; color:var(--muted);}
-.item.plan.picked .planbtn{background:var(--plan); color:#1b1e2b;}
+.item.plan.picked .planbtn{background:var(--plan); color:var(--on-plan);}
 .item.flagged{border-left-color:var(--skip);}
-.flagline{margin-top:8px; font-size:.76rem; color:#ffd8a8; background:#3a2a12;
-  border:1px solid #6b4a1a; border-radius:9px; padding:8px 10px; cursor:pointer; line-height:1.45;}
-.flagline b{color:#ffc078;}
+.flagline{margin-top:8px; font-size:.76rem; color:var(--warn-ink); background:var(--warn-bg);
+  border:1px solid var(--warn-line); border-radius:9px; padding:8px 10px; cursor:pointer; line-height:1.45;}
+.flagline b{color:var(--warn-strong);}
 label.check{display:flex; align-items:center; gap:10px; font-size:.88rem; color:var(--ink); cursor:pointer;}
 label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shrink:0;}
 #toast{position:fixed; left:50%; transform:translateX(-50%); bottom:calc(84px + env(safe-area-inset-bottom));
-  background:var(--accent); color:#1b1e2b; font-weight:700; font-size:.86rem;
+  background:var(--accent); color:var(--on-accent); font-weight:700; font-size:.86rem;
   padding:10px 16px; border-radius:12px; opacity:0; transition:opacity .28s; pointer-events:none; z-index:70; max-width:88vw; text-align:center;}
 #toast.show{opacity:1;}
 @media (prefers-reduced-motion:reduce){*{transition:none !important;} button:active{transform:none;}}
+
+/* ---- welcome ---- */
+.wel-head{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
+.wel-icon{width:46px; height:46px; border-radius:11px; flex-shrink:0;}
+.wel-head h2{margin-bottom:2px;}
+.wel-sub{font-size:.82rem; color:var(--muted);}
+.wel-p{font-size:.88rem; line-height:1.55; margin-bottom:14px;}
+.wel-step{background:var(--panel2); border-radius:10px; padding:10px 12px; margin-bottom:9px;
+  border-left:3px solid var(--accent-ink);}
+.wel-step>b{display:block; font-size:.86rem; color:var(--accent-ink); margin-bottom:5px;}
+.wel-step p{font-size:.8rem; color:var(--muted); line-height:1.5;}
+.wel-step ol.steps{margin:2px 0 0 18px; font-size:.8rem; line-height:1.7; color:var(--muted);}
+.wel-step ol.steps b{color:var(--ink);}
+.wel-step .ok-line{color:var(--got); font-weight:600; font-size:.82rem;}
+.wel-step .hint{margin-top:6px;}
+.wel-step button.wide{margin-top:4px;}
 </style>
 </head>
 <body>
@@ -326,6 +408,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 <div class="sheet-bg" id="menuSheet"><div class="sheet">
   <h2>Menu</h2>
   <div class="warnbox"><b>Everyone shares this list.</b> Ticks appear on the other phones within a second or two. If you are offline, your taps are saved and sent when signal returns.</div>
+  <div class="fld"><button class="wide" id="menuWelcome">👋 Welcome &amp; how to use this</button></div>
   <div class="fld"><button class="wide" id="menuTrip">📋 Trip summary &amp; export</button></div>
   <div class="fld"><button class="wide" id="menuName">🙋 Change my name</button></div>
   <div class="fld"><button class="wide" id="menuImport">📥 Paste a list to add</button></div>
@@ -333,9 +416,55 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="fld"><button class="wide" id="menuLists">🗂️ My lists / start a new one</button></div>
   <div class="fld"><button class="wide" id="menuClearPlan">↩ Put everything back on the list</button></div>
   <div class="fld"><button class="wide" id="menuClear">↺ Start a new trip (clears everyone's ticks)</button></div>
-  <div class="fld"><button class="wide" id="menuForget" style="color:#ff9c9c">⌫ Forget this device</button></div>
+  <div class="fld"><label>Appearance</label>
+    <div class="seg" id="themeSeg">
+      <button type="button" data-theme-set="auto">Auto</button>
+      <button type="button" data-theme-set="light">Light</button>
+      <button type="button" data-theme-set="dark">Dark</button>
+    </div>
+    <div class="hint">Auto follows your phone&rsquo;s own light/dark setting.</div></div>
+  <div class="fld"><button class="wide danger" id="menuForget">⌫ Forget this device</button></div>
   <div class="hint">Add to Home Screen for an app icon — iPhone: Share → Add to Home Screen. Android: ⋮ → Add to Home screen.</div>
   <div class="row" style="margin-top:12px"><button data-close="menuSheet">Close</button></div>
+</div></div>
+
+<!-- LAST sheet in the document on purpose: sheets stack in DOM order, so this
+     sits above the passphrase gate. Dismissing it reveals the gate, which is
+     the sequence a first-time user needs - what this is, then what to type. -->
+<div class="sheet-bg" id="welcomeSheet"><div class="sheet">
+  <div class="wel-head">
+    <img class="wel-icon" src="./favicon.png" alt="" width="48" height="48" decoding="async">
+    <div>
+      <h2>Hello!</h2>
+      <div class="wel-sub">This is the family shopping list.</div>
+    </div>
+  </div>
+
+  <p class="wel-p">Everyone with the link sees the <b>same list</b>. Tick something off
+    and it turns up on the other phones a second or two later &mdash; even from
+    inside the shop.</p>
+
+  <div class="wel-step">
+    <b>1 &middot; Put it on your home screen</b>
+    <div id="welcomeInstall"></div>
+  </div>
+
+  <div class="wel-step">
+    <b>2 &middot; Type the passphrase</b>
+    <p>Whoever sent you the link will tell you what it is. You type it once on this
+      phone, and it never leaves this phone.</p>
+  </div>
+
+  <div class="wel-step">
+    <b>3 &middot; Go shopping</b>
+    <p>Pick the shop you are standing in at the top, then tap <b>Got</b>, <b>Swap</b>
+      or <b>Skip</b> on each row. If the writing is too small, tap <b>Text size</b>
+      at the top.</p>
+  </div>
+
+  <button class="wide primary" id="welcomeGo">Got it &mdash; let&rsquo;s go</button>
+  <div class="hint">You can read this again whenever you like:
+    <b>Menu</b> &rarr; <b>Welcome</b>.</div>
 </div></div>
 
 <div id="toast"></div>

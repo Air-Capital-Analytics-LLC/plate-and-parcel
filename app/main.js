@@ -354,6 +354,89 @@ async function shareThisList() {
   catch { toast(url); }
 }
 
+/* ================= appearance ================= */
+
+/**
+ * Theme lives in its OWN localStorage key rather than in `store.ui`, where the
+ * other device preferences live. That is deliberate: the theme has to be
+ * applied before the first paint or a light-preferring phone flashes dark, and
+ * the pre-paint reader is an inline script in <head> that runs long before any
+ * module is parsed. Making it read the store's JSON would couple that script to
+ * the store schema for the sake of one string.
+ */
+const THEME_KEY = 'pnp.theme';
+const THEMES = ['auto', 'light', 'dark'];
+const THEME_COLOR = { light: '#f2f4f8', dark: '#12141c' };
+
+function readTheme() {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return THEMES.includes(v) ? v : 'auto';
+  } catch { return 'auto'; }
+}
+
+function prefersLight() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+}
+
+function applyTheme() {
+  const choice = readTheme();
+  const resolved = choice === 'auto' ? (prefersLight() ? 'light' : 'dark') : choice;
+  document.documentElement.setAttribute('data-theme', resolved);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', THEME_COLOR[resolved]);
+  for (const b of document.querySelectorAll('[data-theme-set]')) {
+    b.classList.toggle('on', b.dataset.themeSet === choice);
+  }
+}
+
+function setTheme(v) {
+  if (!THEMES.includes(v)) return;
+  try { localStorage.setItem(THEME_KEY, v); } catch { /* private mode: this load only */ }
+  applyTheme();
+}
+
+/**
+ * Follow the system while set to Auto. `addEventListener` on a MediaQueryList
+ * is Safari 14+; older iPhones only have the deprecated `addListener`, and the
+ * parents' phones are exactly the population that might be on one.
+ */
+function watchSystemTheme() {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia('(prefers-color-scheme: light)');
+  const onChange = () => { if (readTheme() === 'auto') applyTheme(); };
+  if (mq.addEventListener) mq.addEventListener('change', onChange);
+  else if (mq.addListener) mq.addListener(onChange);
+}
+
+/* ================= welcome ================= */
+
+const WELCOMED = 'pnp.welcomed';
+
+function openWelcome() {
+  closeSheet('menuSheet');
+  renderInstallHelp($('welcomeInstall'));
+  openSheet('welcomeSheet');
+}
+
+/**
+ * Shown once per device, on top of the passphrase gate rather than instead of
+ * it: the gate is the first thing a new person meets and it explains nothing on
+ * its own. Marked seen when dismissed, not when shown, so an accidental reload
+ * mid-read does not burn it.
+ */
+function maybeWelcome() {
+  let seen = false;
+  try { seen = localStorage.getItem(WELCOMED) === '1'; } catch { seen = true; }
+  if (seen) return;
+  openWelcome();
+}
+
+function dismissWelcome() {
+  try { localStorage.setItem(WELCOMED, '1'); } catch { /* nothing to do */ }
+  closeSheet('welcomeSheet');
+}
+
 /* ================= add to home screen ================= */
 
 /**
@@ -390,20 +473,19 @@ function installDismissed() {
   try { return localStorage.getItem(INSTALL_DISMISSED) === '1'; } catch { return false; }
 }
 
-function renderInstallHelp() {
-  const box = $('installBody');
+function renderInstallHelp(box = $('installBody')) {
   if (isStandalone()) {
     box.innerHTML = '<p class="ok-line">✓ Already on your home screen. Nothing to do.</p>';
     return;
   }
   if (installPrompt) {
     box.innerHTML = '<p>Tap the button and confirm. It will appear with your other apps.</p>'
-      + '<button class="wide primary" id="installGo">Add Plate &amp; Parcel to my home screen</button>';
-    $('installGo').onclick = async () => {
+      + '<button class="wide primary" data-install-go>Add Plate &amp; Parcel to my home screen</button>';
+    box.querySelector('[data-install-go]').onclick = async () => {
       const p = installPrompt;
       installPrompt = null;
       try { await p.prompt(); await p.userChoice; } catch { /* dismissed */ }
-      renderInstallHelp();
+      renderInstallHelp(box);
     };
     return;
   }
@@ -804,6 +886,11 @@ function wireEvents() {
   $('menuImport').onclick = openImport;
   $('menuInstall').onclick = openInstall;
   $('menuLists').onclick = openLists;
+  $('menuWelcome').onclick = openWelcome;
+  $('welcomeGo').onclick = dismissWelcome;
+  for (const b of document.querySelectorAll('[data-theme-set]')) {
+    b.onclick = () => setTheme(b.dataset.themeSet);
+  }
   $('newListGo').onclick = createList;
   $('listsNew').onclick = openNewList;
   $('listsShare').onclick = shareThisList;
@@ -825,6 +912,8 @@ function wireEvents() {
     const next = (store.state.ui.text + 1) % TEXT_SIZES.length;
     store.setUI({ text: next });
     applyTextSize();
+  applyTheme();
+  watchSystemTheme();
     // The button cycles, so its own face cannot show every option. Name the one
     // you just landed on: without this, somebody who cannot read the small text
     // has no way to tell whether the tap did anything at all.
@@ -971,6 +1060,13 @@ async function boot() {
     dbUrl: CONFIG.dbUrl, listId: LIST_ID, codec: plainCodec,
     onRemote: () => {}, onStatus: () => {},
   });
+
+  // Before the gate, not after it. `unlock` is what opens the passphrase sheet
+  // and it does not resolve until the passphrase is in, so anything awaited on
+  // the far side of it arrives long after the moment it was meant to explain.
+  // The welcome sheet is last in the document, so it stacks above the gate
+  // whichever opened first; dismissing it reveals the gate underneath.
+  maybeWelcome();
 
   let codec;
   try {
