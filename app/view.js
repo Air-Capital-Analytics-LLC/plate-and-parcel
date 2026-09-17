@@ -7,7 +7,7 @@
  */
 
 import { DATA } from './data.js';
-import { STATUSES } from './store.js';
+import { STATUSES, MIN_QTY, MAX_QTY } from './store.js';
 
 export const flagKey = (itemId, storeId) => itemId + '@' + storeId;
 
@@ -180,6 +180,19 @@ export function itemHTML(item, state, opts = {}) {
     body = det + alt;
   }
 
+  // How many. Shown as a badge on the name only when it is not 1, so the row
+  // stays quiet by default, and always as a stepper so it can be changed in the
+  // aisle without hunting for a menu.
+  const q = state.qty[item.id]?.q;
+  const qty = typeof q === 'number' ? q : MIN_QTY;
+  const qtyBadge = qty > MIN_QTY ? `<span class="qtybadge">&times;${qty}</span>` : '';
+  const stepper = `<span class="qty" role="group" aria-label="How many">`
+    + `<button class="qminus" data-qty="${esc(item.id)}" data-delta="-1"`
+    + `${qty <= MIN_QTY ? ' disabled' : ''} aria-label="One fewer">&minus;</button>`
+    + `<span class="qnum" aria-live="polite">${qty}</span>`
+    + `<button class="qplus" data-qty="${esc(item.id)}" data-delta="1"`
+    + `${qty >= MAX_QTY ? ' disabled' : ''} aria-label="One more">+</button></span>`;
+
   const whoTag = st && by ? `<span class="who">${esc(by)}</span>` : '';
   const noteRow = (st === 'swap' || st === 'skip') && note
     ? `<div class="noteline" data-note="${esc(item.id)}">`
@@ -206,14 +219,14 @@ export function itemHTML(item, state, opts = {}) {
     const on = !!state.plan[item.id]?.p;
     return `<div class="item plan${on ? ' picked' : ''}" data-id="${esc(item.id)}">`
       + `<div class="nm"><span class="tickbox" aria-hidden="true">${on ? '&#10003;' : ''}</span>`
-      + `${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}</div>`
+      + `${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${stepper}</div>`
       + body + flagRow
       + `<button class="planbtn" data-plan="${esc(item.id)}" aria-pressed="${on}">`
       + `${on ? 'On this trip' : 'Add to trip'}</button></div>`;
   }
 
   return `<div class="item${item.custom ? ' cust' : ''}${st ? ' ' + st : ''}${flagged ? ' flagged' : ''}" data-id="${esc(item.id)}">`
-    + `<div class="nm">${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${whoTag}${removeBtn}</div>`
+    + `<div class="nm">${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${whoTag}${stepper}${removeBtn}</div>`
     + body + flagRow
     + `<div class="acts" role="group" aria-label="${esc(text)}">`
     + `<button class="${st === 'got' ? 'on-got' : ''}" data-act="got" aria-pressed="${st === 'got'}">Got</button>`

@@ -34,10 +34,15 @@ export const STATUSES = ['got', 'swap', 'skip'];
  * "this store never stocks it" lived on the item record alongside the tick,
  * clearing a tick would silently clobber a flag another shopper had just set.
  */
-export const KINDS = ['items', 'added', 'plan', 'flags'];
+export const KINDS = ['items', 'added', 'plan', 'flags', 'qty'];
 
 /** A `t` further ahead than this is not a clock, it is a poisoning attempt. */
 const MAX_SKEW_MS = 24 * 60 * 60 * 1000;
+
+/** How many of a thing. 1 is the default and is never stored, so the feature
+ *  costs nothing for a household that ignores it. */
+export const MIN_QTY = 1;
+export const MAX_QTY = 99;
 
 /** Deleted ad-hoc items are hard-collected after this long. See `prune`. */
 const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -85,6 +90,9 @@ export function isWellFormed(rec, kind) {
   } else if (kind === 'flags') {
     if (typeof rec.f !== 'boolean') return false;
     if (!isStr(rec.by)) return false;
+  } else if (kind === 'qty') {
+    if (typeof rec.q !== 'number' || !Number.isInteger(rec.q)) return false;
+    if (rec.q < MIN_QTY || rec.q > MAX_QTY) return false;
   } else {
     if (typeof rec.name !== 'string') return false;
     if (!isStr(rec.note) || !isStr(rec.store) || !isStr(rec.by)) return false;
@@ -105,6 +113,7 @@ export function createStore({ ns = 'household' } = {}) {
     items: Object.create(null),   // itemId -> {s, n, by, t, c}  (s null = cleared)
     added: Object.create(null),   // addedId -> {name, note, store, by, del, t, c}
     plan:  Object.create(null),   // itemId -> {p, t, c}        on this trip?
+    qty:   Object.create(null),   // itemId -> {q, t, c}        how many (1 = unset)
     flags: Object.create(null),   // "<itemId>@<store>" -> {f, by, t, c}  not stocked here
     outbox: Object.create(null),  // id -> kind                 durable dirty set
     ui: { store: 'sams', hideDone: false, big: false },
@@ -129,6 +138,9 @@ export function createStore({ ns = 'household' } = {}) {
         }
         for (const [id, rec] of Object.entries(o.plan || {})) {
           if (isWellFormed(rec, 'plan')) state.plan[id] = rec;
+        }
+        for (const [id, rec] of Object.entries(o.qty || {})) {
+          if (isWellFormed(rec, 'qty')) state.qty[id] = rec;
         }
         for (const [id, rec] of Object.entries(o.flags || {})) {
           if (isWellFormed(rec, 'flags')) state.flags[id] = rec;
@@ -176,7 +188,8 @@ export function createStore({ ns = 'household' } = {}) {
 
   function snapshot() {
     return JSON.stringify({
-      items: state.items, added: state.added, plan: state.plan, flags: state.flags,
+      items: state.items, added: state.added, plan: state.plan,
+      flags: state.flags, qty: state.qty,
       outbox: state.outbox, ui: state.ui, me: state.me,
     });
   }
@@ -301,6 +314,31 @@ export function createStore({ ns = 'household' } = {}) {
     persist();
     emit({ type: 'bulk' });
   }
+
+  /* ---- how many ---- */
+
+  function getQty(itemId) {
+    const q = state.qty[itemId]?.q;
+    return typeof q === 'number' ? q : MIN_QTY;
+  }
+
+  /**
+   * Clamped, never stored below the default. A quantity is a shared decision
+   * like everything else here, so it gets its own record rather than riding on
+   * the item: otherwise ticking Got would clobber a number somebody had just
+   * changed on the other side of the shop.
+   */
+  function setQty(itemId, n) {
+    const q = Math.max(MIN_QTY, Math.min(MAX_QTY, Math.round(Number(n) || MIN_QTY)));
+    if (q === getQty(itemId)) return q;
+    state.qty[itemId] = stamp({ q });
+    state.outbox[itemId] = 'qty';
+    persist();
+    emit({ type: 'qty', id: itemId });
+    return q;
+  }
+
+  function bumpQty(itemId, delta) { return setQty(itemId, getQty(itemId) + delta); }
 
   /* ---- not stocked here: a correction to the list, not a trip outcome ---- */
 
@@ -514,6 +552,7 @@ export function createStore({ ns = 'household' } = {}) {
     state, subscribe, emit,
     setStatus, addItem, removeAdded, clearAllMarks, setUI, setName,
     hasPlan, isPlanned, setPlanned, clearPlan, replanFromLastTrip,
+    getQty, setQty, bumpQty,
     isFlagged, flagInfo, setFlag, parseList, importItems,
     mergeRemote, pendingOps, ackOps, pendingCount, requeueAll, restampPending,
     flushPersist, isPersistBroken, reset, wins, isWellFormed,

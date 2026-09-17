@@ -225,6 +225,104 @@ function saveAdd() {
   sync?.drain();
 }
 
+/* ================= add to home screen ================= */
+
+/**
+ * Android hands us a real install prompt. iOS does not — Apple exposes no API,
+ * so all we can do there is point at the Share button.
+ *
+ * The trap worth handling is that a link tapped inside Messages or Facebook
+ * opens in an in-app browser that has NO "Add to Home Screen" at all. Someone
+ * following instructions that assume Safari will look for a button that is not
+ * there and conclude they did it wrong.
+ */
+let installPrompt = null;
+const INSTALL_DISMISSED = keyFor('installed');
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
+}
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/** In-app browsers (Messages, Mail, Facebook) have no Add to Home Screen. */
+function isInAppBrowser() {
+  if (!isIOS()) return false;
+  const ua = navigator.userAgent;
+  if (/CriOS|FxiOS|EdgiOS/.test(ua)) return true;          // Chrome/Firefox/Edge on iOS
+  return !/Safari/.test(ua);                                // SFSafariViewController et al
+}
+
+function installDismissed() {
+  try { return localStorage.getItem(INSTALL_DISMISSED) === '1'; } catch { return false; }
+}
+
+function renderInstallHelp() {
+  const box = $('installBody');
+  if (isStandalone()) {
+    box.innerHTML = '<p class="ok-line">✓ Already on your home screen. Nothing to do.</p>';
+    return;
+  }
+  if (installPrompt) {
+    box.innerHTML = '<p>Tap the button and confirm. It will appear with your other apps.</p>'
+      + '<button class="wide primary" id="installGo">Add Plate &amp; Parcel to my home screen</button>';
+    $('installGo').onclick = async () => {
+      const p = installPrompt;
+      installPrompt = null;
+      try { await p.prompt(); await p.userChoice; } catch { /* dismissed */ }
+      renderInstallHelp();
+    };
+    return;
+  }
+  if (isInAppBrowser()) {
+    box.innerHTML =
+      '<p><b>Open this in Safari first.</b></p>'
+      + '<p>Links tapped inside Messages open in a mini-browser that cannot add to the '
+      + 'home screen. Look for the <b>compass icon</b> (Safari) at the bottom of the screen, '
+      + 'or tap <b>…</b> then <b>Open in Safari</b>. Then come back here.</p>';
+    return;
+  }
+  if (isIOS()) {
+    box.innerHTML =
+      '<ol class="steps">'
+      + '<li>Tap the <b>Share</b> button &mdash; the square with an arrow pointing up, '
+      + 'at the <b>bottom</b> of Safari.</li>'
+      + '<li>Scroll down the list that appears.</li>'
+      + '<li>Tap <b>Add to Home Screen</b>.</li>'
+      + '<li>Tap <b>Add</b> in the top right.</li>'
+      + '</ol>'
+      + '<p class="hint">If there is no Share button, you are not in Safari &mdash; '
+      + 'see the note above about Messages.</p>';
+    return;
+  }
+  box.innerHTML =
+    '<ol class="steps">'
+    + '<li>Tap the <b>⋮</b> menu, top right of the browser.</li>'
+    + '<li>Tap <b>Add to Home screen</b> (or <b>Install app</b>).</li>'
+    + '<li>Confirm.</li>'
+    + '</ol>';
+}
+
+function openInstall() {
+  closeSheet('menuSheet');
+  renderInstallHelp();
+  openSheet('installSheet');
+}
+
+function maybeOfferInstall() {
+  if (isStandalone() || installDismissed()) return;
+  $('installBar').style.display = '';
+}
+
+function dismissInstallBar() {
+  try { localStorage.setItem(INSTALL_DISMISSED, '1'); } catch { /* ignore */ }
+  $('installBar').style.display = 'none';
+}
+
 /* ================= import ================= */
 
 let importParsed = [];
@@ -506,6 +604,13 @@ function wireEvents() {
 
   // One delegated listener for ~80 rows instead of ~250 node listeners.
   listEl.addEventListener('click', (e) => {
+    const qtyBtn = e.target.closest('[data-qty]');
+    if (qtyBtn) {
+      if (qtyBtn.disabled) return;
+      store.bumpQty(qtyBtn.dataset.qty, Number(qtyBtn.dataset.delta));
+      sync?.drain();
+      return;
+    }
     const planBtn = e.target.closest('[data-plan]');
     if (planBtn) {
       const id = planBtn.dataset.plan;
@@ -568,6 +673,9 @@ function wireEvents() {
   $('importText').addEventListener('input', previewImport);
   $('importGo').onclick = doImport;
   $('menuImport').onclick = openImport;
+  $('menuInstall').onclick = openInstall;
+  $('installOpen').onclick = openInstall;
+  $('installNo').onclick = dismissInstallBar;
   $('saveAdd').onclick = saveAdd;
   $('saveNote').onclick = saveNote;
   $('btnTrip').onclick = openTrip;
@@ -630,6 +738,19 @@ function wireEvents() {
   };
 
   // A tick made as the phone goes into a pocket must not die with the tab.
+  // Android fires this when the app is installable. Capturing it lets us offer a
+  // real one-tap install instead of instructions nobody reads.
+  addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPrompt = e;
+    maybeOfferInstall();
+  });
+  addEventListener('appinstalled', () => {
+    installPrompt = null;
+    dismissInstallBar();
+    toast('Added to your home screen');
+  });
+
   addEventListener('pagehide', () => store.flushPersist());
   // iOS home-screen PWAs restore through pageshow; visibilitychange is documented
   // as not firing on app-switcher resume in several versions. Without this a
@@ -754,6 +875,7 @@ async function boot() {
   bootRetryArmed = false;
 
   ensureName();
+  maybeOfferInstall();
 }
 
 let planning = false;
