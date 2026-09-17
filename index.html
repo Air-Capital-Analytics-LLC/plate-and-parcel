@@ -119,18 +119,22 @@ body{
   max-width:560px; margin:0 auto; font-size:1rem; line-height:1.4;
   padding:0 12px calc(96px + env(safe-area-inset-bottom));
 }
-/* px and vw, deliberately NOT rem: the title must not grow with the text-size
-   setting. It is fixed decorative text - the list name renders in the meta line
-   below - and somebody asking for bigger text wants a bigger LIST, not a bigger
-   app name eating the header it sits in. Sizing it in rem clipped it to
-   "Plate & Par..." at Large on a 360px phone. */
-h1{font-size:clamp(14px, 4vw, 19px); display:flex; align-items:center; gap:6px;}
-/* Sized in em so it tracks the title rather than the text-size setting. It is
-   decorative - the title next to it already says the name - so alt is empty. */
-.hrow h1 .logo{width:38px; height:38px; border-radius:9px; flex-shrink:0; object-fit:contain;}
-/* Below ~340px (iPhone SE 1st gen and older) the header genuinely runs out of
-   room. The badge stays - it is the honest sync signal - and the emoji goes. */
-@media (max-width:339px){ .hrow h1{font-size:0; gap:0;} .hrow h1 .logo{font-size:1rem;} }
+/* The title is an IMAGE now - icon and wordmark in one - so it carries no type
+   of its own. The h1 stays for the document outline and the alt text carries
+   the name; everything below is about size, not letters. */
+h1{display:flex; align-items:center;}
+/* The banner's background is pixel-for-pixel the --bg token in BOTH themes, so
+   a tight crop sits on the header invisibly and needs no transparency. Fixed
+   height, auto width: deliberately not rem, because chrome must not grow with
+   the text-size setting - that is what used to clip the old wordmark. max-width
+   lets a 320px phone shrink the whole banner instead of cutting the name off. */
+.hrow h1 .brand{height:38px; width:auto; max-width:100%;
+  object-fit:contain; object-position:left center; flex-shrink:1;}
+/* Light mode swaps the artwork. `content` replaces the rendered image without
+   touching src, so a browser that does not honour it simply keeps the dark
+   banner - which is the agreed fallback, not a failure. Only the one that is
+   used gets fetched. */
+html[data-theme="light"] .hrow h1 .brand{content:url("./brand-light.png");}
 button{font-family:inherit; cursor:pointer; border:none; color:var(--ink); background:var(--panel2); border-radius:10px;}
 button:active{transform:scale(.97);}
 button:focus-visible,[data-id] button:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
@@ -441,7 +445,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 
 <header>
   <div class="hrow">
-    <h1><img class="logo" src="./favicon.png" alt="" width="48" height="48" decoding="async"> Plate &amp; Parcel</h1>
+    <h1><img class="brand" src="./brand.png" alt="Plate &amp; Parcel" width="600" height="146" decoding="async"></h1>
     <span class="badge" id="syncBadge">◌</span>
     <button class="sizebtn" id="btnBig" title="Text size" aria-label="Text size">
       <span class="aa">Aa</span><span class="lbl">Text size</span>
