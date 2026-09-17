@@ -4,7 +4,7 @@
  */
 
 import { CONFIG } from '../config.js';
-import { createStore } from './store.js';
+import { createStore, TEXT_SIZES } from './store.js';
 import { createSync, Status } from './sync.js';
 import * as View from './view.js';
 import * as Crypto from './crypto.js';
@@ -173,11 +173,11 @@ function repaint() {
   const storeLabel = (View.STORES.find((x) => x.id === s.ui.store) || View.STORES[0]).label;
   $('pleft').textContent = LIST_ID === DEFAULT_LIST ? storeLabel : `${listLabel()} · ${storeLabel}`;
   $('pright').textContent = planning
-    ? 'Choose what is on this trip'
+    ? 'Tick what you need this time'
     : `${c.done} of ${c.total} handled · ${pct}%`;
   listEl.innerHTML = View.listHTML(s, { planning });
   document.body.classList.toggle('planning', planning);
-  $('planBtn').textContent = planning ? 'Done planning' : 'Plan';
+  $('planBtn').textContent = planning ? '✓ Done — back to shopping' : '✎ Choose what to buy';
   $('planBtn').classList.toggle('on', planning);
 }
 
@@ -822,8 +822,13 @@ function wireEvents() {
   $('btnTrip').onclick = openTrip;
   $('btnMenu').onclick = () => openSheet('menuSheet');
   $('btnBig').onclick = () => {
-    store.setUI({ big: !store.state.ui.big });
-    document.body.classList.toggle('big', store.state.ui.big);
+    const next = (store.state.ui.text + 1) % TEXT_SIZES.length;
+    store.setUI({ text: next });
+    applyTextSize();
+    // The button cycles, so its own face cannot show every option. Name the one
+    // you just landed on: without this, somebody who cannot read the small text
+    // has no way to tell whether the tap did anything at all.
+    toast(`Text size: ${TEXT_SIZES[next]}`);
   };
   $('doneBtn').onclick = () => {
     store.setUI({ hideDone: !store.state.ui.hideDone });
@@ -837,7 +842,7 @@ function wireEvents() {
   $('menuTrip').onclick = () => { closeSheet('menuSheet'); openTrip(); };
   $('menuName').onclick = () => { closeSheet('menuSheet'); $('nameInput').value = store.state.me.name; openSheet('nameSheet'); };
   $('menuClear').onclick = () => {
-    if (!confirm('Start a new trip?\n\nThis clears EVERYONE\u2019s ticks, and sets the new trip to whatever was bought on this one. You can change it under Plan.')) return;
+    if (!confirm('Start a new trip?\n\nThis clears EVERYONE\u2019s ticks, and sets the new trip to whatever was bought on this one. You can change it under “Choose what to buy”.')) return;
     // Order matters: the statuses are the only record of what this trip
     // contained, so the plan must be captured before they are cleared.
     const n = store.replanFromLastTrip();
@@ -915,10 +920,24 @@ function wireEvents() {
   });
 }
 
+/**
+ * The scale is applied to the ROOT element. Everything in the sheet is sized in
+ * `rem`, which resolves against `html` and ignores `body` entirely - see the
+ * comment on the `html` rule in index.html.
+ */
+function applyTextSize() {
+  const n = store.state.ui.text;
+  document.documentElement.classList.toggle('t1', n === 1);
+  document.documentElement.classList.toggle('t2', n === 2);
+  $('btnBig').classList.toggle('set', n > 0);
+  $('btnBig').title = `Text size: ${TEXT_SIZES[n]}`;
+  $('btnBig').setAttribute('aria-label', `Text size, currently ${TEXT_SIZES[n]}. Tap to change.`);
+}
+
 async function boot() {
   View.configure({ catalogue: LIST_ID === DEFAULT_LIST });
   rememberList(LIST_ID);
-  document.body.classList.toggle('big', store.state.ui.big);
+  applyTextSize();
   $('doneBtn').textContent = store.state.ui.hideDone ? 'Show done' : 'Hide done';
   wireEvents();
   store.subscribe((d) => {

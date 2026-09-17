@@ -27,6 +27,13 @@ const lsKey = (ns) => `${LS_PREFIX}:${ns}`;
 export const STATUSES = ['got', 'swap', 'skip'];
 
 /**
+ * Text size steps. The names are shown to the user, so they are words rather
+ * than numbers — "Largest" means something to somebody who needs it; "2" does
+ * not. The scale itself lives in CSS on `html`, not here.
+ */
+export const TEXT_SIZES = ['Normal', 'Large', 'Largest'];
+
+/**
  * The four synced collections.
  *
  * Each is an independent last-writer-wins register, and that separation is the
@@ -116,7 +123,7 @@ export function createStore({ ns = 'household' } = {}) {
     qty:   Object.create(null),   // itemId -> {q, t, c}        how many (1 = unset)
     flags: Object.create(null),   // "<itemId>@<store>" -> {f, by, t, c}  not stocked here
     outbox: Object.create(null),  // id -> kind                 durable dirty set
-    ui: { store: 'sams', hideDone: false, big: false },
+    ui: { store: 'sams', hideDone: false, text: 0 },
     me: { id: '', name: '' },
   };
 
@@ -150,7 +157,16 @@ export function createStore({ ns = 'household' } = {}) {
         // A corrupt ui.store used to reach buildGroups and throw on every paint.
         if (!['sams', 'costco', 'custom'].includes(state.ui.store)) state.ui.store = 'sams';
         state.ui.hideDone = !!state.ui.hideDone;
-        state.ui.big = !!state.ui.big;
+        // Up to v7 this was a boolean `big`. It never actually worked — the
+        // scale was applied to `body`, while every rule in the sheet sizes in
+        // `rem`, which resolves against `html` — but it persisted, so a device
+        // can arrive holding `big:true` set by somebody who wanted bigger text
+        // and never got it. Honour that as one step up rather than dropping it
+        // on the floor, then retire the field.
+        if (typeof state.ui.text !== 'number') state.ui.text = state.ui.big ? 1 : 0;
+        delete state.ui.big;
+        const t = Math.round(state.ui.text);
+        state.ui.text = Number.isFinite(t) ? Math.min(TEXT_SIZES.length - 1, Math.max(0, t)) : 0;
         Object.assign(state.me, o.me || {});
       } catch { /* corrupt: start clean rather than crash */ }
     }
