@@ -18,12 +18,76 @@ const listEl = $('list');
  * its own local state. Only one list exists today; the plumbing is here so
  * adding the second does not mean migrating state off anyone's phone.
  */
+const okId = (v) => typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v.toLowerCase());
+
+/** The list that carries the scraped Sam's/Costco catalogue. Every other list
+ *  starts empty. */
+const DEFAULT_LIST = okId(CONFIG.listId) ? CONFIG.listId.toLowerCase() : 'household';
+
+/** Device-wide, not per-list. */
+const LAST_KEY = 'pnp.lastList';
+const LISTS_KEY = 'pnp.lists';
+
+function readLocal(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+}
+function writeLocal(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
+}
+
+/**
+ * Which list this page is.
+ *
+ * The home-screen icon cannot carry a query string: Add to Home Screen uses the
+ * manifest's `start_url`, not the URL on screen, so an icon added from
+ * `?list=beach` would silently open the household list instead. Remembering the
+ * last list opened on this device makes the icon land where the person expects,
+ * and an explicit `?list=` in a shared link always wins.
+ */
 const LIST_ID = (() => {
-  const ok = (v) => typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v.toLowerCase());
   const q = new URLSearchParams(location.search).get('list');
-  if (ok(q)) return q.toLowerCase();
-  return ok(CONFIG.listId) ? CONFIG.listId.toLowerCase() : 'household';
+  if (okId(q)) return q.toLowerCase();
+  const last = readLocal(LAST_KEY, null);
+  if (okId(last)) return String(last).toLowerCase();
+  return DEFAULT_LIST;
 })();
+
+/* ---- the lists this device knows about (never synced: a device only knows
+        the lists it has been given links to) ---- */
+
+function knownLists() {
+  const reg = readLocal(LISTS_KEY, null);
+  const out = (reg && typeof reg === 'object' && !Array.isArray(reg)) ? { ...reg } : {};
+  if (!out[DEFAULT_LIST]) out[DEFAULT_LIST] = { label: 'Household', at: 0 };
+  return out;
+}
+
+function prettify(id) {
+  return String(id).replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+
+function listLabel(id = LIST_ID) {
+  const rec = knownLists()[id];
+  return (rec && rec.label) || prettify(id);
+}
+
+function rememberList(id, label) {
+  const reg = knownLists();
+  reg[id] = { label: label || reg[id]?.label || prettify(id), at: Date.now() };
+  writeLocal(LISTS_KEY, reg);
+  writeLocal(LAST_KEY, id);
+}
+
+function linkFor(id) {
+  const base = location.href.split('?')[0].split('#')[0];
+  return id === DEFAULT_LIST ? base : `${base}?list=${encodeURIComponent(id)}`;
+}
+
+function switchTo(id) {
+  if (id === LIST_ID) { closeSheet('listsSheet'); return; }
+  writeLocal(LAST_KEY, id);
+  location.href = linkFor(id);
+}
 
 // Per-list, like the store's own key. Each household gets its own link, its own
 // passphrase and its own identity; one shared key across lists would mean
@@ -106,7 +170,8 @@ function repaint() {
   const c = View.counts(s, s.ui.store);
   const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
   $('pfill').style.width = pct + '%';
-  $('pleft').textContent = (View.STORES.find((x) => x.id === s.ui.store) || View.STORES[0]).label;
+  const storeLabel = (View.STORES.find((x) => x.id === s.ui.store) || View.STORES[0]).label;
+  $('pleft').textContent = LIST_ID === DEFAULT_LIST ? storeLabel : `${listLabel()} · ${storeLabel}`;
   $('pright').textContent = planning
     ? 'Choose what is on this trip'
     : `${c.done} of ${c.total} handled · ${pct}%`;
@@ -223,6 +288,70 @@ function saveAdd() {
   if (store.state.ui.store !== addStore) store.setUI({ store: addStore });
   toast('Added');
   sync?.drain();
+}
+
+/* ================= lists ================= */
+
+function slugifyName(name) {
+  return String(name).toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+}
+
+function renderLists() {
+  const reg = knownLists();
+  const ids = Object.keys(reg).sort((a, b) => (reg[b].at || 0) - (reg[a].at || 0));
+  $('listsBody').innerHTML = ids.map((id) => {
+    const here = id === LIST_ID;
+    return `<button class="wide listrow${here ? ' on' : ''}" data-switch="${View.esc(id)}">`
+      + `${View.esc(reg[id].label || id)}`
+      + (here ? '<span class="tag">you are here</span>' : '')
+      + (id === DEFAULT_LIST ? '<span class="tag dim">shopping list</span>' : '')
+      + `</button>`;
+  }).join('');
+}
+
+function openLists() {
+  closeSheet('menuSheet');
+  renderLists();
+  openSheet('listsSheet');
+}
+
+function openNewList() {
+  closeSheet('listsSheet');
+  $('newListName').value = '';
+  $('newListErr').textContent = '';
+  $('newListPreview').textContent = '';
+  openSheet('newListSheet');
+  setTimeout(() => $('newListName').focus(), 150);
+}
+
+function previewNewList() {
+  const id = slugifyName($('newListName').value);
+  $('newListPreview').textContent = id ? linkFor(id) : '';
+  return id;
+}
+
+function createList() {
+  const label = $('newListName').value.trim();
+  const id = slugifyName(label);
+  if (!id) { $('newListErr').textContent = 'Give the list a name.'; return; }
+  if (knownLists()[id]) { $('newListErr').textContent = 'You already have a list with that name.'; return; }
+  // Nothing is created server-side here. A list exists the moment someone opens
+  // it and sets a passphrase, which is the same path the household list took.
+  rememberList(id, label);
+  location.href = linkFor(id);
+}
+
+async function shareThisList() {
+  const url = linkFor(LIST_ID);
+  if (navigator.share) {
+    try { await navigator.share({ title: `Plate & Parcel — ${listLabel()}`, url }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+  catch { toast(url); }
 }
 
 /* ================= add to home screen ================= */
@@ -674,6 +803,18 @@ function wireEvents() {
   $('importGo').onclick = doImport;
   $('menuImport').onclick = openImport;
   $('menuInstall').onclick = openInstall;
+  $('menuLists').onclick = openLists;
+  $('newListGo').onclick = createList;
+  $('listsNew').onclick = openNewList;
+  $('listsShare').onclick = shareThisList;
+  $('newListName').addEventListener('input', previewNewList);
+  $('newListName').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); createList(); }
+  });
+  $('listsBody').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-switch]');
+    if (b) switchTo(b.dataset.switch);
+  });
   $('installOpen').onclick = openInstall;
   $('installNo').onclick = dismissInstallBar;
   $('saveAdd').onclick = saveAdd;
@@ -775,6 +916,8 @@ function wireEvents() {
 }
 
 async function boot() {
+  View.configure({ catalogue: LIST_ID === DEFAULT_LIST });
+  rememberList(LIST_ID);
   document.body.classList.toggle('big', store.state.ui.big);
   $('doneBtn').textContent = store.state.ui.hideDone ? 'Show done' : 'Hide done';
   wireEvents();

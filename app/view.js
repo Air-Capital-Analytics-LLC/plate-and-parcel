@@ -46,10 +46,27 @@ function itemId(sectionName, itemName) {
   return v;
 }
 
+/**
+ * Only the original household list carries the scraped catalogue. A second
+ * household's "Hardware" or "Christmas" list opening full of chicken thighs and
+ * jasmine rice would be nonsense, and per-list catalogues would mean teaching
+ * the Word-document pipeline about lists — a lot of machinery for a list whose
+ * owner mostly wants to type things in. New lists start empty and are filled by
+ * hand or by pasting.
+ */
+let useCatalogue = true;
+export function configure(opts) {
+  if (typeof opts?.catalogue === 'boolean' && opts.catalogue !== useCatalogue) {
+    useCatalogue = opts.catalogue;
+    groupCache = null;
+  }
+}
+
 let groupCache = null;
 function baseGroups() {
   if (groupCache) return groupCache;
   groupCache = { sams: [], costco: [], custom: [] };
+  if (!useCatalogue) return groupCache;
 
   for (const store of ['sams', 'costco']) {
     const want = store === 'sams' ? ["Sam's", 'Both'] : ['Costco', 'Both'];
@@ -264,7 +281,9 @@ export function listHTML(state, opts = {}) {
       html = c.total === 0
         ? (anyPlanned(state)
           ? `<div class="empty">Nothing from this store is on this trip.<br><br>Tap <b>Plan</b> to add things, or <b>+</b> for a one-off.</div>`
-          : `<div class="empty">Nothing on the list for this store.<br>Tap <b>+</b> to add something.</div>`)
+          : (useCatalogue
+            ? `<div class="empty">Nothing on the list for this store.<br>Tap <b>+</b> to add something.</div>`
+            : `<div class="empty">This list is empty.<br><br>Tap <b>+</b> to add one thing, or <b>&#8943;</b> then <b>Paste a list</b> to add several at once.</div>`))
         : `<div class="empty">&#9989; Everything here is handled.<br><br>Tap <b>Show done</b> to see it again.</div>`;
     }
   }
