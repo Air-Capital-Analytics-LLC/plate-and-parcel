@@ -1,0 +1,13 @@
+{
+  "name": "Plate & Parcel",
+  "short_name": "Plate & Parcel",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12141c",
+  "theme_color": "#12141c",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "./icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

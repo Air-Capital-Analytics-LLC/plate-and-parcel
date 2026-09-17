@@ -1,0 +1,15 @@
+# Local test config - points at the mock server on 127.0.0.1. If this ever
+# reached the published site every request would be blocked as mixed content
+# and sync would silently stop for everyone.
+config.js.mock
+*.local.js
+
+# Trip exports carry who bought what.
+plate-and-parcel-trip-*.txt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
