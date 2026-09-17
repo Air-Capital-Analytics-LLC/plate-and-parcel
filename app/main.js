@@ -912,8 +912,6 @@ function wireEvents() {
     const next = (store.state.ui.text + 1) % TEXT_SIZES.length;
     store.setUI({ text: next });
     applyTextSize();
-  applyTheme();
-  watchSystemTheme();
     // The button cycles, so its own face cannot show every option. Name the one
     // you just landed on: without this, somebody who cannot read the small text
     // has no way to tell whether the tap did anything at all.
@@ -1027,6 +1025,12 @@ async function boot() {
   View.configure({ catalogue: LIST_ID === DEFAULT_LIST });
   rememberList(LIST_ID);
   applyTextSize();
+  // The inline <head> script has already painted the right theme; this marks
+  // which option is selected in the menu and starts following the system while
+  // Auto is chosen. watchSystemTheme registers a listener, so it belongs here
+  // and nowhere that runs more than once.
+  applyTheme();
+  watchSystemTheme();
   $('doneBtn').textContent = store.state.ui.hideDone ? 'Show done' : 'Hide done';
   wireEvents();
   store.subscribe((d) => {

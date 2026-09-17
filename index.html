@@ -204,11 +204,15 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .empty{text-align:center; color:var(--muted); font-size:.85rem; padding:34px 14px; line-height:1.6;}
 
 .fab{position:fixed; right:14px; bottom:calc(14px + env(safe-area-inset-bottom));
-  width:56px; height:56px; border-radius:50%; background:var(--accent); color:var(--on-accent);
-  font-size:1.8rem; font-weight:700; box-shadow:0 5px 16px var(--shadow); z-index:35;}
+  width:56px; height:56px; --fill:var(--accent); color:var(--on-accent);
+  font-size:1.8rem; font-weight:700; z-index:35;
+  -webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);
+  filter:drop-shadow(0 4px 8px var(--shadow));}
+.fab::before{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
 .fab2{position:fixed; left:14px; bottom:calc(14px + env(safe-area-inset-bottom));
-  height:46px; padding:0 16px; border-radius:23px; background:var(--panel2);
-  border:1px solid var(--line); font-size:.83rem; font-weight:600; z-index:35;}
+  height:46px; padding:0 16px; --fill:var(--panel2);
+  font-size:.83rem; font-weight:600; z-index:35;
+  filter:drop-shadow(0 3px 7px var(--shadow));}
 .sheet-bg{position:fixed; inset:0; background:rgba(0,0,0,.72); display:none; align-items:flex-end; justify-content:center; z-index:60;}
 .sheet-bg.open{display:flex;}
 .sheet{background:var(--panel); width:100%; max-width:560px; border-radius:20px 20px 0 0;
@@ -219,10 +223,10 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .sheet .row{display:flex; gap:8px;}
 .sheet .row button{flex:1; padding:13px; font-weight:600;}
 .sheet .wide{width:100%; padding:13px; font-weight:600; text-align:left;}
-.primary{background:var(--accent) !important; color:var(--on-accent) !important;}
+.primary{--fill:var(--accent) !important; color:var(--on-accent) !important;}
 .seg{display:flex; gap:6px;}
 .seg button{flex:1; padding:11px 4px; font-size:.82rem; color:var(--muted);}
-.seg button.on{background:var(--accent); color:var(--on-accent); font-weight:700;}
+.seg button.on{--fill:var(--accent); color:var(--on-accent); font-weight:700;}
 #report{white-space:pre-wrap; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.76rem; min-height:220px;}
 .hint{font-size:.74rem; color:var(--muted); line-height:1.5; margin-top:8px;}
 .danger{color:var(--danger);}
@@ -230,7 +234,7 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .warnbox{background:var(--warn-bg); border:1px solid var(--warn-line); border-radius:10px; padding:10px 12px;
   font-size:.76rem; color:var(--warn-ink); line-height:1.5; margin-bottom:10px;}
 .listrow{display:flex; align-items:center; gap:8px; margin-bottom:8px; text-align:left;}
-.listrow.on{outline:2px solid var(--accent);}
+.listrow.on{--bevel-edge:var(--accent);}
 .listrow .tag{font-size:.64rem; font-weight:600; background:var(--accent); color:var(--on-accent);
   border-radius:5px; padding:2px 6px; margin-left:auto; flex-shrink:0;}
 .listrow .tag.dim{background:var(--panel2); color:var(--muted); margin-left:6px;}
@@ -240,8 +244,8 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
   padding:11px 12px; margin-bottom:10px; font-size:.83rem; color:var(--muted); line-height:1.4;}
 .installbar span{flex:1 1 100%;}
 .installbar button{padding:9px 14px; font-size:.8rem; font-weight:600;
-  background:var(--accent); color:var(--on-accent);}
-.installbar button.ghost{background:transparent; color:var(--muted); border:1px solid var(--line);}
+  --fill:var(--accent); color:var(--on-accent);}
+.installbar button.ghost{--fill:var(--panel2); color:var(--muted); border:none;}
 #installBody p{font-size:.88rem; line-height:1.55; margin-bottom:10px;}
 #installBody .ok-line{color:var(--got); font-weight:600;}
 #installBody .hint{font-size:.78rem; color:var(--muted);}
@@ -249,15 +253,17 @@ ol.steps{margin:0 0 10px 20px; font-size:.9rem; line-height:1.75;}
 ol.steps li{margin-bottom:4px;}
 .qty{display:inline-flex; align-items:center; gap:2px; margin-left:auto; flex-shrink:0;}
 .qty button{width:34px; height:34px; font-size:1.1rem; font-weight:700; line-height:1;
-  background:var(--panel2); color:var(--ink); border:1px solid var(--line); padding:0;}
+  --fill:var(--panel2); color:var(--ink); border:none; padding:0;
+  --px:2px; -webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
+.qty button::before{-webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
 .qty button:disabled{opacity:.35;}
 .qnum{min-width:26px; text-align:center; font-size:.9rem; font-weight:700; color:var(--ink);}
 .qtybadge{font-size:.66rem; font-weight:700; background:var(--accent); color:var(--on-accent);
   border-radius:5px; padding:2px 6px;}
 .planbar{width:100%; margin-top:8px; padding:11px; font-size:.95rem; font-weight:700;
-  letter-spacing:.02em; background:var(--panel); color:var(--plan-ink);
-  border:1px solid var(--line); border-left:3px solid var(--plan-ink);}
-.planbar.on{background:var(--plan); color:var(--on-plan); border-color:var(--plan);}
+  letter-spacing:.02em; --fill:var(--panel); color:var(--plan-ink);
+  --bevel-edge:var(--plan-ink);}
+.planbar.on{--fill:var(--plan); color:var(--on-plan); --bevel-edge:var(--plan-ink);}
 body.planning .item{opacity:1;}
 .item.plan{border-left-color:var(--line);}
 .item.plan.picked{border-left-color:var(--plan);}
@@ -265,7 +271,7 @@ body.planning .item{opacity:1;}
   border:2px solid var(--line); border-radius:6px; font-size:.8rem; color:var(--on-plan);}
 .item.plan.picked .tickbox{background:var(--plan); border-color:var(--plan);}
 .planbtn{width:100%; margin-top:9px; padding:11px; font-size:.82rem; font-weight:600; color:var(--muted);}
-.item.plan.picked .planbtn{background:var(--plan); color:var(--on-plan);}
+.item.plan.picked .planbtn{--fill:var(--plan); color:var(--on-plan);}
 .item.flagged{border-left-color:var(--skip);}
 .flagline{margin-top:8px; font-size:.76rem; color:var(--warn-ink); background:var(--warn-bg);
   border:1px solid var(--warn-line); border-radius:9px; padding:8px 10px; cursor:pointer; line-height:1.45;}
@@ -294,14 +300,28 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
    pixel-unit, carrying the fill and the bevel - sits on top of it. z-index:-1
    inside an isolated stacking context paints above the parent's background but
    below the text, which is exactly the sandwich required. */
-.pxl{
+.pxl,
+.sheet button,
+.installbar button,
+.fab,
+.fab2,
+.planbar,
+.planbtn,
+.qty button{
   --px:3px;
   position:relative; isolation:isolate;
   border:none; border-radius:0;
   background:var(--bevel-edge);
   -webkit-clip-path:var(--pxl-shape); clip-path:var(--pxl-shape);
 }
-.pxl::before{
+.pxl::before,
+.sheet button::before,
+.installbar button::before,
+.fab::before,
+.fab2::before,
+.planbar::before,
+.planbtn::before,
+.qty button::before{
   content:''; position:absolute; inset:var(--px); z-index:-1;
   background:var(--fill,var(--panel2));
   -webkit-clip-path:var(--pxl-shape); clip-path:var(--pxl-shape);
@@ -310,15 +330,43 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 }
 /* Pressed: the light comes from the other side and the cap sinks. Replaces the
    global scale(.97), which reads as "web button" rather than "switch". */
-.pxl:active{transform:translate(1px,1px);}
-.pxl:active::before{
+.pxl:active,
+.sheet button:active,
+.installbar button:active,
+.fab:active,
+.fab2:active,
+.planbar:active,
+.planbtn:active,
+.qty button:active{transform:translate(1px,1px);}
+.pxl:active::before,
+.sheet button:active::before,
+.installbar button:active::before,
+.fab:active::before,
+.fab2:active::before,
+.planbar:active::before,
+.planbtn:active::before,
+.qty button:active::before{
   box-shadow:inset var(--px) var(--px) 0 0 var(--bevel-lo),
              inset calc(-1 * var(--px)) calc(-1 * var(--px)) 0 0 var(--bevel-hi);
 }
 /* The focus ring has to move inside: an outline outside the box is clipped
    away by clip-path, so keyboard focus would become invisible. */
-.pxl:focus-visible{outline:none;}
-.pxl:focus-visible::before{
+.pxl:focus-visible,
+.sheet button:focus-visible,
+.installbar button:focus-visible,
+.fab:focus-visible,
+.fab2:focus-visible,
+.planbar:focus-visible,
+.planbtn:focus-visible,
+.qty button:focus-visible{outline:none;}
+.pxl:focus-visible::before,
+.sheet button:focus-visible::before,
+.installbar button:focus-visible::before,
+.fab:focus-visible::before,
+.fab2:focus-visible::before,
+.planbar:focus-visible::before,
+.planbtn:focus-visible::before,
+.qty button:focus-visible::before{
   box-shadow:inset 0 0 0 var(--px) var(--accent),
              inset var(--px) var(--px) 0 0 var(--bevel-hi),
              inset calc(-1 * var(--px)) calc(-1 * var(--px)) 0 0 var(--bevel-lo);
@@ -334,7 +382,43 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
     6px calc(100% - 3px), 3px calc(100% - 3px),
     3px calc(100% - 6px), 0% calc(100% - 6px),
     0% 6px, 3px 6px, 3px 3px, 6px 3px);
+
+  /* Small controls - the quantity steppers - at 2px so the steps stay in
+     proportion to a 34px button instead of eating it. */
+  --pxl-shape-sm:polygon(
+    4px 0%, calc(100% - 4px) 0%,
+    calc(100% - 4px) 2px, calc(100% - 2px) 2px,
+    calc(100% - 2px) 4px, 100% 4px,
+    100% calc(100% - 4px), calc(100% - 2px) calc(100% - 4px),
+    calc(100% - 2px) calc(100% - 2px), calc(100% - 4px) calc(100% - 2px),
+    calc(100% - 4px) 100%, 4px 100%,
+    4px calc(100% - 2px), 2px calc(100% - 2px),
+    2px calc(100% - 4px), 0% calc(100% - 4px),
+    0% 4px, 2px 4px, 2px 2px, 4px 2px);
+
+  /* The round ones. The reference sheet has these too - a circle drawn on a
+     grid is a staircase, so this is percentage-based and scales with the
+     button rather than being a fixed-radius approximation. */
+  --pxl-shape-round:polygon(
+    30% 0%, 70% 0%, 70% 8%, 85% 8%, 85% 15%, 92% 15%, 92% 30%, 100% 30%,
+    100% 70%, 92% 70%, 92% 85%, 85% 85%, 85% 92%, 70% 92%, 70% 100%, 30% 100%,
+    30% 92%, 15% 92%, 15% 85%, 8% 85%, 8% 70%, 0% 70%,
+    0% 30%, 8% 30%, 8% 15%, 15% 15%, 15% 8%, 30% 8%);
 }
+
+/* SHAPE OVERRIDES MUST COME AFTER THE BLOCK ABOVE. The wide selector list and
+   these rules have identical specificity, so source order decides, and the
+   list would otherwise flatten the round and the small variants back into the
+   default rectangle. */
+.qty button{--px:2px; -webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
+.qty button::before{-webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
+.fab{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
+.fab::before{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
+/* The block above sets position:relative so ::before has something to anchor
+   to. These two are FIXED, and the wide selector list silently took that away -
+   the + button and Hide done stopped floating and scrolled off with the page.
+   position:fixed already establishes a containing block, so it needs no help. */
+.fab,.fab2{position:fixed;}
 
 /* ---- welcome ---- */
 .wel-head{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
