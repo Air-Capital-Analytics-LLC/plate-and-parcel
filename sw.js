@@ -11,7 +11,7 @@
 // bump a device can run yesterday's modules against today's data shape — a
 // combination that was never tested. `activate` deletes every other version, so
 // the shell upgrades as one unit rather than file by file.
-const VERSION = 'v15';
+const VERSION = 'v16';
 const CACHE = `plate-and-parcel-${VERSION}`;
 
 const SHELL = [
@@ -31,6 +31,9 @@ const SHELL = [
   './favicon.png',
   './brand.png',
   './brand-light.png',
+  // NOT preview.png. It is the link-preview card, fetched only by whatever
+  // scraper draws the message bubble - the app never loads it. Precaching it
+  // would cost every phone the download for nothing.
 ];
 
 /**

@@ -10,6 +10,26 @@
 <meta name="theme-color" content="#12141c">
 <meta name="robots" content="noindex, nofollow">
 <meta name="copyright" content="Copyright (c) 2026 Air Capital Analytics LLC. All Rights Reserved.">
+
+<!-- The card a phone draws when this link is texted. The whole onboarding route
+     for this app is "text them the link", and without these a message shows a
+     bare grey URL - which is exactly what a parent has been told not to tap.
+     Absolute URLs on purpose: a scraper does not resolve relative ones.
+     `noindex` above still applies; these only fire for somebody who already has
+     the link, and the card shows the name and nothing from the list. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Plate &amp; Parcel">
+<meta property="og:title" content="Plate &amp; Parcel">
+<meta property="og:description" content="The family shopping list. Everyone sees the same list, and ticks appear on the other phones within seconds.">
+<meta property="og:url" content="https://air-capital-analytics-llc.github.io/plate-and-parcel/">
+<meta property="og:image" content="https://air-capital-analytics-llc.github.io/plate-and-parcel/preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="Plate &amp; Parcel">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Plate &amp; Parcel">
+<meta name="twitter:description" content="The family shopping list. Everyone sees the same list, and ticks appear on the other phones within seconds.">
+<meta name="twitter:image" content="https://air-capital-analytics-llc.github.io/plate-and-parcel/preview.png">
 <title>Plate &amp; Parcel</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
