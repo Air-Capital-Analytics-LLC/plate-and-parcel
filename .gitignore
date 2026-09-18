@@ -13,3 +13,7 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# The real config while a mock is being tested. Never commit either side of
+# that swap - see the pre-commit hook, which checks the CONTENT of config.js.
+config.js.ship

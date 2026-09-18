@@ -1,0 +1,59 @@
+Copyright (c) 2026 Air Capital Analytics LLC. All Rights Reserved.
+
+This software, including its source code, assets, and documentation
+("the Software"), is proprietary and confidential.
+
+No part of the Software may be copied, reproduced, modified, adapted,
+published, distributed, sublicensed, sold, or used, in whole or in part, by any
+person or entity, without the express prior written permission of the copyright
+holder.
+
+Unauthorized use, reproduction, or distribution of the Software, or any portion
+of it, is strictly prohibited and may result in civil and criminal penalties.
+
+Note on visibility: the contents of the site/ directory are published to a
+public repository because GitHub Pages serves a site from a repository root and
+free Pages requires that repository to be public. Publication is a hosting
+requirement and is not a grant of any licence, express or implied. Being able to
+read this software does not confer permission to use it.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+
+---------------------------------------------------------------------------
+THIRD-PARTY COMPONENTS
+---------------------------------------------------------------------------
+
+The published application has NO third-party runtime components. It loads no
+library, no framework and no font from any origin but its own: every module in
+site/app/ is first-party.
+
+On typefaces. The stylesheet names -apple-system, Segoe UI and system-ui. Those
+typefaces are indeed under copyright, and this software neither contains nor
+distributes any of them. Naming a font family in CSS asks the reader's own
+device to use a font it already holds under its own licence; no copy is made
+and nothing is redistributed, so no font licence attaches to this software.
+Embedding a font file would be the act that created such an obligation, and no
+font file is embedded.
+
+The following are build-time tools only. They run on a maintainer's machine to
+generate assets, and no part of them is bundled into or redistributed with the
+published site:
+
+  Pillow          HPND License          image generation (scripts/build_banner.py,
+                                        assets/icon_plate_and_parcel.py)
+  python-docx     MIT License           reads the source shopping document
+                                        (scripts/extract.py)
+
+The wordmark and icon artwork are first-party. The pixel lettering is drawn
+geometrically by assets/banner_plate_and_parcel.py rather than set in a
+typeface, so no font is embedded and no font licence attaches to it.
+
+Google Firebase Realtime Database is used as a hosted service, reached over its
+public REST and SSE endpoints. No Firebase SDK or other Google code is included
+in this software; use of the service is governed by the agreement between the
+copyright holder and Google, not by this licence.

@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="Plate & Parcel">
 <meta name="theme-color" content="#12141c">
 <meta name="robots" content="noindex, nofollow">
+<meta name="copyright" content="Copyright (c) 2026 Air Capital Analytics LLC. All Rights Reserved.">
 <title>Plate &amp; Parcel</title>
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./apple-touch-icon.png">
@@ -437,6 +438,13 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
    position:fixed already establishes a containing block, so it needs no help. */
 .fab,.fab2{position:fixed;}
 
+/* Sits under the list, so it is the last thing on the page rather than
+   something competing with it. Muted and small on purpose: a notice, not a
+   headline. The bottom padding on body already clears the floating buttons. */
+.legal-menu{text-align:center; margin-top:10px; line-height:1.6;}
+.legal{text-align:center; font-size:.68rem; color:var(--muted);
+  padding:18px 8px 4px; letter-spacing:.02em;}
+
 /* ---- welcome ---- */
 .wel-head{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
 .wel-icon{width:46px; height:46px; border-radius:11px; flex-shrink:0;}
@@ -489,6 +497,8 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 </div>
 
 <main id="list"></main>
+
+<footer class="legal">&copy; 2026 Air Capital Analytics LLC</footer>
 
 <button class="fab2" id="doneBtn">Hide done</button>
 <button class="fab" id="fabAdd" aria-label="Add an item">+</button>
@@ -604,6 +614,8 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
     <div class="hint">Auto follows your phone&rsquo;s own light/dark setting.</div></div>
   <div class="fld"><button class="wide danger" id="menuForget">⌫ Forget this device</button></div>
   <div class="hint">Add to Home Screen for an app icon — iPhone: Share → Add to Home Screen. Android: ⋮ → Add to Home screen.</div>
+  <div class="hint legal-menu">&copy; 2026 Air Capital Analytics LLC. All rights reserved.<br>
+    Plate &amp; Parcel <span id="menuVersion"></span></div>
   <div class="row" style="margin-top:12px"><button data-close="menuSheet">Close</button></div>
 </div></div>
 

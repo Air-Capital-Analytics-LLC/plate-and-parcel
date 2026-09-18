@@ -409,6 +409,24 @@ function watchSystemTheme() {
   else if (mq.addListener) mq.addListener(onChange);
 }
 
+/**
+ * The running version, read from the service worker's own cache name rather
+ * than from a constant kept in step by hand. `sw.js` names its cache
+ * `plate-and-parcel-<VERSION>`, so this cannot drift from what is actually
+ * installed - which is the whole point of showing it. Silent when there is no
+ * cache yet (first load, or a browser that refuses one): an absent version
+ * is better than a wrong one.
+ */
+async function showVersion() {
+  const el = $('menuVersion');
+  if (!el) return;
+  try {
+    const keys = await caches.keys();
+    const mine = keys.find((k) => k.startsWith('plate-and-parcel-'));
+    if (mine) el.textContent = mine.replace('plate-and-parcel-', '');
+  } catch { /* no cache API, or storage denied */ }
+}
+
 /* ================= welcome ================= */
 
 const WELCOMED = 'pnp.welcomed';
@@ -1031,6 +1049,7 @@ async function boot() {
   // and nowhere that runs more than once.
   applyTheme();
   watchSystemTheme();
+  showVersion();
   $('doneBtn').textContent = store.state.ui.hideDone ? 'Show done' : 'Hide done';
   wireEvents();
   store.subscribe((d) => {
