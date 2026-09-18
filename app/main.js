@@ -175,6 +175,31 @@ const sealedCodec = {
  */
 let locked = !!CONFIG.requirePassphrase;
 
+/**
+ * WHY it is locked, which decides what the locked screen offers.
+ *
+ * 'pass'        the gate is up and waiting - normal.
+ * 'unreachable' the list could not be read, so a passphrase cannot be checked
+ *               even if it were typed. Offering a box here would be a lie.
+ * 'offline'     no signal and this phone has never unlocked this list.
+ *
+ * Reported as a dead end: locked, no passphrase box, nothing to press. Both
+ * failure paths returned early from boot leaving `locked` true and no gate, and
+ * the gate is deliberately exempt from backdrop-close, so there was no way out
+ * and no explanation.
+ */
+let lockReason = 'pass';
+
+/** Anything that reads or changes list content refuses while locked. The Trip
+ *  summary is built from the catalogue, so the button was a second door into
+ *  exactly what the lock exists to hide - reported, and the reason these are
+ *  guarded at the function rather than only hidden in the UI. */
+function blockedWhileLocked() {
+  if (!locked) return false;
+  toast('Enter the passphrase first');
+  return true;
+}
+
 let renderQueued = false;
 let renderTimer = null;
 
@@ -219,12 +244,27 @@ function repaint() {
     $('pfill').style.width = '0%';
     $('pleft').textContent = listLabel();
     $('pright').textContent = 'Locked';
-    listEl.innerHTML = '<div class="empty">This list is locked.<br><br>'
-      + 'Enter the passphrase to see it.</div>';
+    const body = {
+      pass: 'This list is locked.<br><br>Enter the passphrase to see it.',
+      unreachable: 'Cannot reach this list right now.<br><br>'
+        + 'Without it the passphrase cannot be checked, so there is nothing to type yet. '
+        + 'This is usually signal.<br><br>'
+        + '<button class="wide" id="lockRetry">Try again</button>',
+      offline: 'You are offline, and this phone has not opened this list before.<br><br>'
+        + 'Connect to something and it will ask for the passphrase.<br><br>'
+        + '<button class="wide" id="lockRetry">Try again</button>',
+    }[lockReason] || 'This list is locked.';
+    listEl.innerHTML = '<div class="empty">' + body + '</div>';
+    const retry = $('lockRetry');
+    if (retry) retry.onclick = () => location.reload();
     $('planBtn').hidden = true;
+    // The Trip summary is built from the catalogue. Leaving it reachable while
+    // locked made the lock decorative.
+    $('btnTrip').hidden = true;
     return;
   }
   $('planBtn').hidden = false;
+  $('btnTrip').hidden = false;
   $('tabs').innerHTML = View.tabsHTML(s);
   const c = View.counts(s, s.ui.store);
   const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
@@ -668,11 +708,13 @@ function doImport() {
 /* ================= export ================= */
 
 function openTrip() {
+  if (blockedWhileLocked()) return;
   $('report').value = View.buildReport(store.state);
   openSheet('tripSheet');
 }
 
 async function shareTrip() {
+  if (blockedWhileLocked()) return;
   const text = View.buildReport(store.state);
   if (navigator.share) {
     try { await navigator.share({ title: 'Shopping trip', text }); return; }
@@ -904,6 +946,10 @@ function promptPass(tempSync, meta, reachable) {
 /* ================= name ================= */
 
 function ensureName() {
+  // Not while locked. Both the unreachable and offline paths used to land on a
+  // dead-end screen and then ask the visitor's name, which reads as a form to
+  // fill in when there is nothing behind it.
+  if (locked) return;
   if (store.state.me.name) return;
   $('nameInput').value = '';
   openSheet('nameSheet');
@@ -984,11 +1030,11 @@ function wireEvents() {
     bg.addEventListener('click', (e) => { if (e.target === bg) bg.classList.remove('open'); });
   });
 
-  $('planBtn').onclick = () => { planning = !planning; render(); scrollTo({ top: 0 }); };
-  $('fabAdd').onclick = openAdd;
+  $('planBtn').onclick = () => { if (blockedWhileLocked()) return; planning = !planning; render(); scrollTo({ top: 0 }); };
+  $('fabAdd').onclick = () => { if (!blockedWhileLocked()) openAdd(); };
   $('importText').addEventListener('input', previewImport);
   $('importGo').onclick = doImport;
-  $('menuImport').onclick = openImport;
+  $('menuImport').onclick = () => { if (!blockedWhileLocked()) openImport(); };
   $('menuInstall').onclick = openInstall;
   $('menuLists').onclick = openLists;
   $('menuWelcome').onclick = openWelcome;
@@ -1011,7 +1057,7 @@ function wireEvents() {
   $('installNo').onclick = dismissInstallBar;
   $('saveAdd').onclick = saveAdd;
   $('saveNote').onclick = saveNote;
-  $('btnTrip').onclick = openTrip;
+  $('btnTrip').onclick = openTrip;   // guarded inside
   $('btnMenu').onclick = () => openSheet('menuSheet');
   $('btnBig').onclick = () => {
     const next = (store.state.ui.text + 1) % TEXT_SIZES.length;
@@ -1031,9 +1077,10 @@ function wireEvents() {
   $('copyTrip').onclick = copyTrip;
   $('dlTrip').onclick = downloadTrip;
 
-  $('menuTrip').onclick = () => { closeSheet('menuSheet'); openTrip(); };
+  $('menuTrip').onclick = () => { closeSheet('menuSheet'); openTrip(); };   // guarded inside
   $('menuName').onclick = () => { closeSheet('menuSheet'); $('nameInput').value = store.state.me.name; openSheet('nameSheet'); };
   $('menuClear').onclick = () => {
+    if (blockedWhileLocked()) return;
     if (!confirm('Start a new trip?\n\nThis clears EVERYONE\u2019s ticks, and sets the new trip to whatever was bought on this one. You can change it under “Choose what to buy”.')) return;
     // Order matters: the statuses are the only record of what this trip
     // contained, so the plan must be captured before they are cleared.
@@ -1044,6 +1091,7 @@ function wireEvents() {
     toast(n ? `New trip — ${n} item${n === 1 ? '' : 's'} carried over` : 'Ready for a new trip');
   };
   $('menuClearPlan').onclick = () => {
+    if (blockedWhileLocked()) return;
     if (!confirm('Put every item back on the trip for everyone?')) return;
     store.clearPlan(); closeSheet('menuSheet'); sync?.drain(); toast('Everything is back on the list');
   };
@@ -1200,6 +1248,8 @@ async function boot() {
     // of the day reached nobody. A remotely-writable `meta.salt` of the wrong
     // type was enough to trigger it on all four phones at once.
     if (e && e.message === 'no webcrypto') return;
+    lockReason = 'unreachable';
+    render();
     lastStatus = Status.ERROR;
     setSyncBadge(Status.ERROR, {});
     $('syncBadge').textContent = 'Not syncing';
@@ -1215,6 +1265,8 @@ async function boot() {
   if (!codec) {
     // Offline with nothing verifiable yet. The comment used to promise
     // local-only "until we reconnect" while nothing ever reconnected.
+    lockReason = 'offline';
+    render();
     setSyncBadge(Status.OFFLINE);
     retryBootWhenOnline();
     ensureName();
