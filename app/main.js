@@ -385,6 +385,53 @@ function openAdd() {
   setTimeout(() => $('addName').focus(), 120);
 }
 
+/* ================= edit an added item ================= */
+
+let editId = null;
+let editStore = 'sams';
+
+function openEdit(id) {
+  if (blockedWhileLocked()) return;
+  const a = store.state.added[id];
+  if (!a || a.del) { toast('That item is already gone'); return; }
+  editId = id;
+  editStore = a.store;
+  $('editName').value = a.name || '';
+  $('editNote').value = a.note || '';
+  $('editStore').innerHTML = View.STORES
+    .map((s) => `<button data-editstore="${s.id}" class="${editStore === s.id ? 'on' : ''}">${View.esc(s.short)}</button>`)
+    .join('');
+  $('editWho').textContent = a.by ? `Added by ${a.by}.` : '';
+  openSheet('editSheet');
+}
+
+function saveEdit() {
+  const name = $('editName').value.trim();
+  if (!name) { toast('Give it a name first'); return; }
+  const moved = store.state.added[editId]?.store !== editStore;
+  if (!store.editAdded(editId, { name, note: $('editNote').value.trim(), store: editStore })) {
+    toast('That item is already gone');
+    closeSheet('editSheet');
+    return;
+  }
+  closeSheet('editSheet');
+  // Moving an item to another shop hides it from the tab you are looking at,
+  // which reads as the edit having deleted it. Follow it across.
+  if (moved && store.state.ui.store !== editStore) store.setUI({ store: editStore });
+  toast(moved ? 'Saved \u2014 moved to ' + (View.STORES.find((s) => s.id === editStore) || {}).short : 'Saved');
+  sync?.drain();
+}
+
+function deleteEdited() {
+  const a = store.state.added[editId];
+  if (!a) { closeSheet('editSheet'); return; }
+  if (!confirm(`Remove \u201c${a.name}\u201d from the list?\n\nIt goes for everybody, on every phone.`)) return;
+  store.removeAdded(editId);
+  closeSheet('editSheet');
+  toast('Removed');
+  sync?.drain();
+}
+
 function saveAdd() {
   const name = $('addName').value.trim();
   if (!name) { toast('Give it a name first'); return; }
@@ -1001,8 +1048,8 @@ function wireEvents() {
       return;
     }
     if (planning) return;   // planning mode has no Got/Swap/Skip
-    const rm = e.target.closest('[data-remove]');
-    if (rm) { store.removeAdded(rm.dataset.remove); sync?.drain(); return; }
+    const rm = e.target.closest('[data-edit]');
+    if (rm) { openEdit(rm.dataset.edit); return; }
     const noteLine = e.target.closest('[data-note]');
     if (noteLine) {
       const id = noteLine.dataset.note;
@@ -1017,6 +1064,14 @@ function wireEvents() {
     sync?.drain();
   });
 
+  $('editSave').onclick = saveEdit;
+  $('editDelete').onclick = deleteEdited;
+  $('editStore').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-editstore]');
+    if (!b) return;
+    editStore = b.dataset.editstore;
+    for (const x of $('editStore').children) x.classList.toggle('on', x === b);
+  });
   $('addStore').addEventListener('click', (e) => {
     const b = e.target.closest('[data-addstore]');
     if (!b) return;

@@ -539,6 +539,24 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="row"><button class="primary" id="saveName">Save</button></div>
 </div></div>
 
+<!-- Edit is only ever offered on items somebody added or pasted. Catalogue rows
+     come from the source document and are changed there, not here. -->
+<div class="sheet-bg" id="editSheet"><div class="sheet">
+  <h2>Edit item</h2>
+  <div class="fld"><label>What is it?</label><input id="editName" autocomplete="off"></div>
+  <div class="fld"><label>Note (size, price, why)</label><input id="editNote" placeholder="optional" autocomplete="off"></div>
+  <div class="fld"><label>Which store?</label><div class="seg" id="editStore"></div></div>
+  <div class="hint" id="editWho"></div>
+  <div class="row" style="margin-top:12px">
+    <button data-close="editSheet">Cancel</button>
+    <button class="primary" id="editSave">Save</button>
+  </div>
+  <div class="fld" style="margin-top:14px">
+    <button class="wide danger" id="editDelete">&#9003; Remove from the list</button>
+    <div class="hint">Removes it for everybody, on every phone.</div>
+  </div>
+</div></div>
+
 <div class="sheet-bg" id="addSheet"><div class="sheet">
   <h2>Add an item</h2>
   <div class="fld"><label>What is it?</label><input id="addName" placeholder="e.g. paper towels" autocomplete="off"></div>

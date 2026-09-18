@@ -215,8 +215,11 @@ export function itemHTML(item, state, opts = {}) {
     ? `<div class="noteline" data-note="${esc(item.id)}">`
       + `<b>${st === 'swap' ? 'Bought instead' : 'Reason'}:</b> ${esc(note)} <span class="pencil">&#9998;</span></div>`
     : '';
+  // Edit rather than a bare x. Deletion lives inside it, which is how it becomes
+  // findable: reported as "there is no removal at all" when the x had been there
+  // the whole time - 26px, muted, unlabelled, at the end of a name.
   const removeBtn = item.mine
-    ? `<button class="rm" data-remove="${esc(item.id)}" aria-label="Remove ${esc(text)}">&times;</button>` : '';
+    ? `<button class="rm" data-edit="${esc(item.id)}" aria-label="Edit or remove ${esc(text)}">&#9998;</button>` : '';
 
   // A persistent correction to the list, not a trip outcome. It survives
   // "Start a new trip", says who reported it, and the row is never removed —

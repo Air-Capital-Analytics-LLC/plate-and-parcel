@@ -292,6 +292,32 @@ export function createStore({ ns = 'household' } = {}) {
     return id;
   }
 
+  /**
+   * Change an added item in place, keeping its id.
+   *
+   * Keeping the id is the whole point: the quantity, the tick, the plan entry
+   * and any not-stocked flag are all keyed to it. Delete-and-re-add would look
+   * the same on screen and silently drop every one of them, and on another
+   * phone it would read as one item vanishing and an unrelated one appearing.
+   * A restamp is an ordinary edit that merges the same way any other does.
+   */
+  function editAdded(id, patch) {
+    const cur = state.added[id];
+    if (!cur || cur.del) return false;
+    const name = String(patch.name ?? cur.name).trim();
+    if (!name) return false;
+    state.added[id] = stamp({
+      ...cur,
+      name,
+      note: String(patch.note ?? cur.note ?? ''),
+      store: String(patch.store ?? cur.store),
+    });
+    state.outbox[id] = 'added';
+    persist();
+    emit({ type: 'added' });
+    return true;
+  }
+
   function removeAdded(id) {
     const cur = state.added[id];
     if (!cur) return;
@@ -566,7 +592,7 @@ export function createStore({ ns = 'household' } = {}) {
 
   return {
     state, subscribe, emit,
-    setStatus, addItem, removeAdded, clearAllMarks, setUI, setName,
+    setStatus, addItem, editAdded, removeAdded, clearAllMarks, setUI, setName,
     hasPlan, isPlanned, setPlanned, clearPlan, replanFromLastTrip,
     getQty, setQty, bumpQty,
     isFlagged, flagInfo, setFlag, parseList, importItems,
