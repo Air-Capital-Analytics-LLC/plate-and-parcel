@@ -44,13 +44,40 @@ function writeLocal(key, value) {
  * last list opened on this device makes the icon land where the person expects,
  * and an explicit `?list=` in a shared link always wins.
  */
-const LIST_ID = (() => {
+const RESOLVED = (() => {
   const q = new URLSearchParams(location.search).get('list');
-  if (okId(q)) return q.toLowerCase();
+  if (okId(q)) return q.toLowerCase();                 // an explicit link always wins
   const last = readLocal(LAST_KEY, null);
-  if (okId(last)) return String(last).toLowerCase();
-  return DEFAULT_LIST;
+  if (okId(last)) return String(last).toLowerCase();   // this device has been here before
+
+  // Installed app with no memory. iOS has historically given a standalone PWA
+  // its own storage bucket, separate from the Safari tab it was added from, so
+  // the icon can launch with `pnp.lastList` empty on a phone that has used this
+  // for months. Stranding the owner behind a neutral screen would be a far
+  // worse failure than a stranger seeing the default list, so the installed app
+  // always opens something.
+  if (isStandalone()) return DEFAULT_LIST;
+
+  return null;                                          // a bare link in a browser
 })();
+
+/**
+ * A bare link, in a browser, on a device that has never opened a list.
+ *
+ * That is a stranger who was sent the URL, or somebody who found it. It used to
+ * land them on the household list's gate, which named the list and confirmed it
+ * existed. Now it opens nothing at all.
+ *
+ * This is obscurity and is filed as such: the list ids are in the public repo
+ * for anyone who goes looking. What it buys is that a link pasted into a chat
+ * no longer resolves to a working front door for whoever idly taps it, which is
+ * the difference between a passer-by and somebody who meant it.
+ */
+const NO_LIST = RESOLVED === null;
+
+/** Everything downstream still needs a namespace; nothing is opened when
+ *  NO_LIST, so which one it is does not matter. */
+const LIST_ID = RESOLVED || DEFAULT_LIST;
 
 /* ---- the lists this device knows about (never synced: a device only knows
         the lists it has been given links to) ---- */
@@ -78,9 +105,14 @@ function rememberList(id, label) {
   writeLocal(LAST_KEY, id);
 }
 
+/**
+ * Every share link now names its list, the household one included. The bare URL
+ * deliberately opens nothing, so a link without `?list=` would hand somebody a
+ * neutral screen and no way forward.
+ */
 function linkFor(id) {
   const base = location.href.split('?')[0].split('#')[0];
-  return id === DEFAULT_LIST ? base : `${base}?list=${encodeURIComponent(id)}`;
+  return `${base}?list=${encodeURIComponent(id)}`;
 }
 
 function switchTo(id) {
@@ -456,6 +488,26 @@ async function showVersion() {
     const mine = keys.find((k) => k.startsWith('plate-and-parcel-'));
     if (mine) el.textContent = mine.replace('plate-and-parcel-', '');
   } catch { /* no cache API, or storage denied */ }
+}
+
+/**
+ * The neutral screen. Names no list, confirms no list exists, and offers the
+ * welcome sheet - which explains what the app is without revealing anything
+ * about whose list it holds.
+ */
+function showNoList() {
+  for (const sel of ['#tabs', '.pbar', '.pmeta', '#planBtn', '#fabAdd', '#doneBtn']) {
+    const el = document.querySelector(sel);
+    if (el) el.hidden = true;
+  }
+  document.querySelector('.installbar')?.remove();
+  listEl.innerHTML = '<div class="empty"><b>Open the link you were sent.</b><br><br>'
+    + 'A list only opens from its own link, and that link is not this one. '
+    + 'Ask whoever invited you to send it again.<br><br>'
+    + '<button class="wide" id="noListWhat">What is this?</button></div>';
+  $('noListWhat').onclick = openWelcome;
+  $('syncBadge').textContent = '';
+  $('syncBadge').hidden = true;
 }
 
 /* ================= welcome ================= */
@@ -1075,18 +1127,23 @@ function applyTextSize() {
 }
 
 async function boot() {
-  View.configure({ catalogue: LIST_ID === DEFAULT_LIST });
-  rememberList(LIST_ID);
   applyTextSize();
-  // The inline <head> script has already painted the right theme; this marks
-  // which option is selected in the menu and starts following the system while
-  // Auto is chosen. watchSystemTheme registers a listener, so it belongs here
-  // and nowhere that runs more than once.
   applyTheme();
   watchSystemTheme();
   showVersion();
-  $('doneBtn').textContent = store.state.ui.hideDone ? 'Show done' : 'Hide done';
   wireEvents();
+
+  if (NO_LIST) {
+    // Deliberately before rememberList: recording this visit would write
+    // `pnp.lastList` and quietly turn the bare URL into a working door on the
+    // next open, undoing the whole point.
+    showNoList();
+    return;
+  }
+
+  View.configure({ catalogue: LIST_ID === DEFAULT_LIST });
+  rememberList(LIST_ID);
+  $('doneBtn').textContent = store.state.ui.hideDone ? 'Show done' : 'Hide done';
   store.subscribe((d) => {
     setSyncBadge(lastStatus, lastDetail);
     // 'sync' means an ack landed: the only thing on screen that changed is the
@@ -1095,7 +1152,14 @@ async function boot() {
     if (d && d.type === 'sync') return;
     render();
   });
-  render();
+
+  // Paint once, unconditionally. `paint()` skips a hidden document on purpose -
+  // a phone in a pocket should not rebuild the list for every remote patch -
+  // but the FIRST paint is what establishes the locked chrome, and it has to
+  // happen whether anybody is looking yet or not. Otherwise a tab opened in the
+  // background shows the passphrase box over a page still wearing the tab bar
+  // and the Plan button it is supposed to be hiding.
+  try { repaint(); } catch { /* the next paint carries the fallback */ }
 
   // A page served over https can only reach an https database; anything else is
   // blocked as mixed content and the app would sit on "Retrying" forever with no
