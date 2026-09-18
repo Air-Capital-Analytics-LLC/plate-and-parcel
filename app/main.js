@@ -127,6 +127,22 @@ const sealedCodec = {
 
 /* ================= render ================= */
 
+/**
+ * Nothing about the list is painted until a key exists.
+ *
+ * `render()` used to run before `unlock()`, so the catalogue - every item name,
+ * pack size and price - was on screen behind the passphrase box to anyone who
+ * opened the link. The ticks, the added items and the quantities were always
+ * encrypted and never showed, but "the passphrase protects this list" was not
+ * true of what you could actually see.
+ *
+ * This is a blind, not a lock: `app/data.js` ships in a public repository and
+ * always will, because Pages serves from one. It raises the cost of reading the
+ * catalogue from a tap to finding and reading the repo, which is the difference
+ * between a passer-by and somebody who meant it.
+ */
+let locked = !!CONFIG.requirePassphrase;
+
 let renderQueued = false;
 let renderTimer = null;
 
@@ -166,12 +182,27 @@ function paint() {
 
 function repaint() {
   const s = store.state;
+  if (locked) {
+    $('tabs').innerHTML = '';
+    $('pfill').style.width = '0%';
+    $('pleft').textContent = listLabel();
+    $('pright').textContent = 'Locked';
+    listEl.innerHTML = '<div class="empty">This list is locked.<br><br>'
+      + 'Enter the passphrase to see it.</div>';
+    $('planBtn').hidden = true;
+    return;
+  }
+  $('planBtn').hidden = false;
   $('tabs').innerHTML = View.tabsHTML(s);
   const c = View.counts(s, s.ui.store);
   const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
   $('pfill').style.width = pct + '%';
   const storeLabel = (View.STORES.find((x) => x.id === s.ui.store) || View.STORES[0]).label;
-  $('pleft').textContent = LIST_ID === DEFAULT_LIST ? storeLabel : `${listLabel()} · ${storeLabel}`;
+  // Always name the list, the default one included. The header is a fixed
+  // banner now, so without this there is nothing on screen saying WHICH list
+  // you are looking at - and the whole point of several lists is telling them
+  // apart.
+  $('pleft').textContent = `${listLabel()} · ${storeLabel}`;
   $('pright').textContent = planning
     ? 'Tick what you need this time'
     : `${c.done} of ${c.total} handled · ${pct}%`;
@@ -747,10 +778,14 @@ function promptPass(tempSync, meta, reachable) {
     const cachedSalt = readStoredSalt();
     const cachedCheck = readStoredCheck();
 
-    $('passTitle').textContent = isNew ? 'Set the list passphrase' : 'Enter the list passphrase';
+    // Name the list being unlocked. Somebody who keeps two lists needs to know
+    // which passphrase is being asked for, and somebody who mistyped a link
+    // needs to see that they have landed somewhere they did not mean to.
+    const who = listLabel();
+    $('passTitle').textContent = isNew ? `Set the passphrase for ${who}` : `Unlock ${who}`;
     $('passHint').textContent = isNew
-      ? `You are the first person here. Pick a passphrase of at least ${MIN_PASS} characters — a few words is easiest — and share it with the others. They type it once on their own phone.`
-      : 'Ask whoever set the list up. You only have to type it once on this device.';
+      ? `Nobody has opened “${who}” before, so you are setting it up. Pick a passphrase of at least ${MIN_PASS} characters — a few words is easiest — and share it with the others. They type it once on their own phone.`
+      : `Ask whoever set “${who}” up. You only have to type it once on this device.`;
     $('passInput').value = '';
     $('passErr').textContent = '';
     openSheet('passSheet');
@@ -1109,6 +1144,10 @@ async function boot() {
     ensureName();
     return;
   }
+  // The view is blind until here. Unblind it and paint immediately: nothing
+  // else on the boot path is guaranteed to fire, so without this the screen
+  // would sit on "Locked" until some unrelated event happened to repaint.
+  if (codec) { locked = false; render(); }
   if (!codec) {
     // Offline with nothing verifiable yet. The comment used to promise
     // local-only "until we reconnect" while nothing ever reconnected.
