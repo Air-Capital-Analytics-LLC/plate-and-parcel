@@ -239,6 +239,8 @@ function paint() {
 
 function repaint() {
   const s = store.state;
+  // No list at all outranks everything: there is nothing to lock or show.
+  if (NO_LIST) { paintNoList(); return; }
   if (locked) {
     $('tabs').innerHTML = '';
     $('pfill').style.width = '0%';
@@ -535,19 +537,28 @@ async function showVersion() {
  * welcome sheet - which explains what the app is without revealing anything
  * about whose list it holds.
  */
-function showNoList() {
-  for (const sel of ['#tabs', '.pbar', '.pmeta', '#planBtn', '#fabAdd', '#doneBtn']) {
+/**
+ * Called from `repaint`, on EVERY paint, not once from boot.
+ *
+ * It was a one-shot, and `wireEvents` registers a `pageshow` handler that calls
+ * `render()` - and `pageshow` fires on every load. So the neutral screen was
+ * painted and then immediately overwritten by the locked view, which is how a
+ * bare link still showed "Household / Locked". Exactly the M10 mistake again:
+ * the decision lived in one layer while another layer reached the same screen.
+ */
+function paintNoList() {
+  for (const sel of ['#tabs', '.pbar', '.pmeta', '#planBtn', '#fabAdd', '#doneBtn', '#btnTrip']) {
     const el = document.querySelector(sel);
     if (el) el.hidden = true;
   }
   document.querySelector('.installbar')?.remove();
+  $('syncBadge').textContent = '';
+  $('syncBadge').hidden = true;
   listEl.innerHTML = '<div class="empty"><b>Open the link you were sent.</b><br><br>'
     + 'A list only opens from its own link, and that link is not this one. '
     + 'Ask whoever invited you to send it again.<br><br>'
     + '<button class="wide" id="noListWhat">What is this?</button></div>';
   $('noListWhat').onclick = openWelcome;
-  $('syncBadge').textContent = '';
-  $('syncBadge').hidden = true;
 }
 
 /* ================= welcome ================= */
@@ -1184,8 +1195,9 @@ async function boot() {
   if (NO_LIST) {
     // Deliberately before rememberList: recording this visit would write
     // `pnp.lastList` and quietly turn the bare URL into a working door on the
-    // next open, undoing the whole point.
-    showNoList();
+    // next open, undoing the whole point. repaint() owns the screen from here -
+    // it checks NO_LIST first, so later paints cannot overwrite it.
+    repaint();
     return;
   }
 
