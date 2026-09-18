@@ -210,7 +210,12 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .nm{font-weight:600; font-size:.97rem; margin-bottom:2px; display:flex; align-items:center; flex-wrap:wrap; gap:5px;}
 .frozen{font-size:.6rem; background:var(--frozen-bg); color:var(--frozen-ink); border-radius:5px; padding:2px 6px; letter-spacing:.05em;}
 .who{font-size:.6rem; background:var(--panel2); color:var(--muted); border-radius:5px; padding:2px 6px; font-weight:500;}
-.rm{margin-left:auto; width:26px; height:26px; font-size:1rem; line-height:1; color:var(--muted); background:transparent;}
+/* Reported as "I really don't see it". It was a 26px muted glyph on a
+   transparent background, tucked past the quantity stepper - readable as
+   decoration, not as something to press. Now it is the same size and the same
+   bevel as the stepper beside it, in the app's own colour. */
+.rm{margin-left:6px; width:34px; height:34px; font-size:1rem; line-height:1;
+  flex-shrink:0; --fill:var(--panel2); color:var(--accent-ink); font-weight:700;}
 .det{font-size:.8rem; color:var(--muted);}
 .det .price{color:var(--accent-ink); font-weight:600;}
 .alt{font-size:.74rem; color:var(--muted); margin-top:3px; opacity:.85;}
@@ -293,7 +298,7 @@ ol.steps li{margin-bottom:4px;}
 .qty button{width:34px; height:34px; font-size:1.1rem; font-weight:700; line-height:1;
   --fill:var(--panel2); color:var(--ink); border:none; padding:0;
   --px:2px; -webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
-.qty button::before{-webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
+.qty button::before,.rm::before{-webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
 .qty button:disabled{opacity:.35;}
 .qnum{min-width:26px; text-align:center; font-size:.9rem; font-weight:700; color:var(--ink);}
 .qtybadge{font-size:.66rem; font-weight:700; background:var(--accent); color:var(--on-accent);
@@ -345,6 +350,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .fab2,
 .planbar,
 .planbtn,
+.rm,
 .qty button{
   --px:3px;
   position:relative; isolation:isolate;
@@ -359,6 +365,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .fab2::before,
 .planbar::before,
 .planbtn::before,
+.rm::before,
 .qty button::before{
   content:''; position:absolute; inset:var(--px); z-index:-1;
   background:var(--fill,var(--panel2));
@@ -375,6 +382,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .fab2:active,
 .planbar:active,
 .planbtn:active,
+.rm:active,
 .qty button:active{transform:translate(1px,1px);}
 .pxl:active::before,
 .sheet button:active::before,
@@ -383,6 +391,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .fab2:active::before,
 .planbar:active::before,
 .planbtn:active::before,
+.rm:active::before,
 .qty button:active::before{
   box-shadow:inset var(--px) var(--px) 0 0 var(--bevel-lo),
              inset calc(-1 * var(--px)) calc(-1 * var(--px)) 0 0 var(--bevel-hi);
@@ -396,6 +405,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .fab2:focus-visible,
 .planbar:focus-visible,
 .planbtn:focus-visible,
+.rm:focus-visible,
 .qty button:focus-visible{outline:none;}
 .pxl:focus-visible::before,
 .sheet button:focus-visible::before,
@@ -404,6 +414,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .fab2:focus-visible::before,
 .planbar:focus-visible::before,
 .planbtn:focus-visible::before,
+.rm:focus-visible::before,
 .qty button:focus-visible::before{
   box-shadow:inset 0 0 0 var(--px) var(--accent),
              inset var(--px) var(--px) 0 0 var(--bevel-hi),
@@ -448,7 +459,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
    these rules have identical specificity, so source order decides, and the
    list would otherwise flatten the round and the small variants back into the
    default rectangle. */
-.qty button{--px:2px; -webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
+.qty button,.rm{--px:2px; -webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
 .qty button::before{-webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
 .fab{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
 .fab::before{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
