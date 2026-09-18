@@ -227,6 +227,9 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .sheet .row{display:flex; gap:8px;}
 .sheet .row button{flex:1; padding:13px; font-weight:600;}
 .sheet .wide{width:100%; padding:13px; font-weight:600; text-align:left;}
+/* Menu rows are a list and read left-aligned. A primary action is not a list
+   item - it is the one thing to do - so it centres. */
+.sheet .wide.primary{text-align:center;}
 .primary{--fill:var(--accent) !important; color:var(--on-accent) !important;}
 .seg{display:flex; gap:6px;}
 .seg button{flex:1; padding:11px 4px; font-size:.82rem; color:var(--muted);}
@@ -439,6 +442,12 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .wel-step .ok-line{color:var(--got); font-weight:600; font-size:.82rem;}
 .wel-step .hint{margin-top:6px;}
 .wel-step button.wide{margin-top:4px;}
+/* The step sits on --panel2 and so, by default, would these - a button the same
+   colour as the box it is in. Lift them onto --panel so they read as controls. */
+.wel-step .seg{margin:2px 0 8px;}
+.wel-step .seg button{--fill:var(--panel);}
+.wel-step .seg button.on{--fill:var(--accent);}
+.wel-step p+p{margin-top:6px;}
 </style>
 </head>
 <body>
@@ -618,8 +627,25 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="wel-step">
     <b>3 &middot; Go shopping</b>
     <p>Pick the shop you are standing in at the top, then tap <b>Got</b>, <b>Swap</b>
-      or <b>Skip</b> on each row. If the writing is too small, tap <b>Text size</b>
-      at the top.</p>
+      or <b>Skip</b> on each row.</p>
+  </div>
+
+  <!-- A LIVE control, not a description. Appearance lives in the menu, and
+       somebody who never opens the menu would never learn it exists - which is
+       the whole problem with putting a comfort setting behind a button. These
+       carry the same data-theme-set attribute as the pair in the menu, so both
+       sets wire themselves and stay in step with no extra JavaScript. -->
+  <div class="wel-step">
+    <b>4 &middot; Make it easy to read</b>
+    <div class="seg">
+      <button type="button" data-theme-set="auto">Auto</button>
+      <button type="button" data-theme-set="light">Light</button>
+      <button type="button" data-theme-set="dark">Dark</button>
+    </div>
+    <p><b>Auto</b> follows whatever your phone already does. Tap <b>Light</b> or
+      <b>Dark</b> to try them &mdash; the screen changes as you tap.</p>
+    <p>If the writing is too small, tap <b>Text size</b> at the top of the
+      screen. Both of these live under <b>Menu &rarr; Appearance</b> later.</p>
   </div>
 
   <button class="wide primary" id="welcomeGo">Got it &mdash; let&rsquo;s go</button>
