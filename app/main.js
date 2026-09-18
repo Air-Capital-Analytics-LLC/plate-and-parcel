@@ -389,27 +389,41 @@ function openAdd() {
 
 let editId = null;
 let editStore = 'sams';
+let editCat = false;
 
 function openEdit(id) {
   if (blockedWhileLocked()) return;
+  // Read the row as SHOWN, not the override record: a catalogue row that this
+  // list has never touched has no record at all, and is being edited for the
+  // first time right now.
+  const row = View.findItem(store.state, id);
+  if (!row) { toast('That item is already gone'); return; }
   const a = store.state.added[id];
-  if (!a || a.del) { toast('That item is already gone'); return; }
   editId = id;
-  editStore = a.store;
-  $('editName').value = a.name || '';
-  $('editNote').value = a.note || '';
+  editCat = View.isCatalogueId(id);
+  editStore = a?.store || row.store;
+  $('editName').value = row.name || '';
+  $('editNote').value = (a ? a.note : '') || '';
+  $('editFromCat').hidden = !editCat;
+  $('editDelete').textContent = editCat
+    ? '\u232b Take off this list'
+    : '\u232b Remove from the list';
   $('editStore').innerHTML = View.STORES
     .map((s) => `<button data-editstore="${s.id}" class="${editStore === s.id ? 'on' : ''}">${View.esc(s.short)}</button>`)
     .join('');
-  $('editWho').textContent = a.by ? `Added by ${a.by}.` : '';
+  $('editWho').textContent = (!editCat && a?.by) ? `Added by ${a.by}.` : '';
   openSheet('editSheet');
 }
 
 function saveEdit() {
   const name = $('editName').value.trim();
   if (!name) { toast('Give it a name first'); return; }
-  const moved = store.state.added[editId]?.store !== editStore;
-  if (!store.editAdded(editId, { name, note: $('editNote').value.trim(), store: editStore })) {
+  const was = store.state.added[editId]?.store
+    ?? View.findItem(store.state, editId)?.store;
+  const moved = was !== editStore;
+  if (!store.upsertAdded(editId, {
+    name, note: $('editNote').value.trim(), store: editStore, cat: editCat,
+  })) {
     toast('That item is already gone');
     closeSheet('editSheet');
     return;
@@ -423,12 +437,16 @@ function saveEdit() {
 }
 
 function deleteEdited() {
-  const a = store.state.added[editId];
-  if (!a) { closeSheet('editSheet'); return; }
-  if (!confirm(`Remove \u201c${a.name}\u201d from the list?\n\nIt goes for everybody, on every phone.`)) return;
-  store.removeAdded(editId);
+  const row = View.findItem(store.state, editId);
+  if (!row) { closeSheet('editSheet'); return; }
+  const msg = editCat
+    ? `Take \u201c${row.name}\u201d off this list?\n\nIt stays in the reference catalogue and on every other list. `
+      + `You can put it back from the menu.`
+    : `Remove \u201c${row.name}\u201d from the list?\n\nIt goes for everybody, on every phone.`;
+  if (!confirm(msg)) return;
+  store.removeAdded(editId, { cat: editCat, name: row.name, store: editStore });
   closeSheet('editSheet');
-  toast('Removed');
+  toast(editCat ? 'Taken off this list' : 'Removed');
   sync?.drain();
 }
 
@@ -1155,6 +1173,13 @@ function wireEvents() {
     closeSheet('menuSheet');
     sync?.drain();
     toast(n ? `New trip — ${n} item${n === 1 ? '' : 's'} carried over` : 'Ready for a new trip');
+  };
+  $('menuRestore').onclick = () => {
+    if (blockedWhileLocked()) return;
+    const n = store.restoreHidden();
+    closeSheet('menuSheet');
+    sync?.drain();
+    toast(n ? `Put back ${n} item${n === 1 ? '' : 's'}` : 'Nothing was taken off this list');
   };
   $('menuClearPlan').onclick = () => {
     if (blockedWhileLocked()) return;

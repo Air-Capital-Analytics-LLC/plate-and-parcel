@@ -558,6 +558,9 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="fld"><label>Note (size, price, why)</label><input id="editNote" placeholder="optional" autocomplete="off"></div>
   <div class="fld"><label>Which store?</label><div class="seg" id="editStore"></div></div>
   <div class="hint" id="editWho"></div>
+  <div class="warnbox" id="editFromCat" hidden>This one came from the <b>reference
+    catalogue</b>. Changing it here changes it <b>on this list only</b> &mdash; the
+    catalogue and every other list stay as they were.</div>
   <div class="row" style="margin-top:12px">
     <button data-close="editSheet">Cancel</button>
     <button class="primary" id="editSave">Save</button>
@@ -652,6 +655,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="fld"><button class="wide" id="menuImport">📥 Paste a list to add</button></div>
   <div class="fld"><button class="wide" id="menuInstall">📲 Add to my home screen</button></div>
   <div class="fld"><button class="wide" id="menuLists">🗂️ My lists / start a new one</button></div>
+  <div class="fld"><button class="wide" id="menuRestore">&#8635; Put back items I took off this list</button></div>
   <div class="fld"><button class="wide" id="menuClearPlan">↩ Put everything back on the list</button></div>
   <div class="fld"><button class="wide" id="menuClear">↺ Start a new trip (clears everyone's ticks)</button></div>
   <div class="fld"><label>Appearance</label>

@@ -100,20 +100,66 @@ function baseGroups() {
 }
 
 /** Visible groups for a store, including that store's live "added by me" rows. */
+/** Every catalogue id, for telling an override from an ad-hoc item. */
+export function catalogueIds() {
+  const ids = new Set();
+  const g = baseGroups();
+  for (const store of ['sams', 'costco', 'custom']) {
+    for (const sec of g[store]) for (const it of sec.items) ids.add(it.id);
+  }
+  return ids;
+}
+
+export function isCatalogueId(id) { return catalogueIds().has(id); }
+
+/** The row as it is actually shown, override applied. Used by the edit sheet,
+ *  which is handed an id and has to fill a form from it. */
+export function findItem(state, id) {
+  for (const store of ['sams', 'costco', 'custom']) {
+    for (const sec of buildGroups(state, store)) {
+      for (const it of sec.items) if (it.id === id) return { ...it, store };
+    }
+  }
+  return null;
+}
+
 export function buildGroups(state, storeId) {
   // Never index blind. A corrupt `ui.store` reaching here threw on every paint,
   // which the renderer's catch then turned into a permanent error card offering
   // a recovery that could not work.
   const base = baseGroups()[storeId] || baseGroups().sams;
-  const out = base.slice();
+  const added = state.added || {};
+  const out = [];
+  const baseIds = new Set();
+
+  // The catalogue is the starting point, not the contents. A record in `added`
+  // keyed by a catalogue id sits in front of that row FOR THIS LIST: renaming
+  // it, re-noting it, moving it, or taking it off entirely. data.js is never
+  // written to and every other list is unaffected.
+  for (const sec of base) {
+    const items = [];
+    for (const it of sec.items) {
+      baseIds.add(it.id);
+      const o = added[it.id];
+      if (o && o.del) continue;                       // removed from this list
+      if (o && o.store !== storeId) continue;         // moved to another shop
+      items.push(o
+        ? { ...it, name: o.name, detail: o.note || it.detail, edited: true, editable: true }
+        : { ...it, editable: true });
+    }
+    if (items.length) out.push({ sec: sec.sec, items });
+  }
+
+  // Ad-hoc items, plus any catalogue row moved INTO this shop from another.
   const mine = [];
-  for (const id of Object.keys(state.added)) {
-    const a = state.added[id];
+  for (const id of Object.keys(added)) {
+    const a = added[id];
     if (!a || a.del || a.store !== storeId) continue;
-    mine.push({ id, name: a.name, detail: a.note || '', mine: true, by: a.by });
+    if (baseIds.has(id)) continue;                    // already shown above
+    mine.push({ id, name: a.name, detail: a.note || '', mine: !a.cat, edited: !!a.cat, editable: true, by: a.by });
   }
   if (mine.length) {
-    mine.sort((x, y) => (state.added[x.id].t || 0) - (state.added[y.id].t || 0));
+    mine.sort((x, y) => (added[x.id].t || 0) - (added[y.id].t || 0));
     out.push({ sec: 'ADDED', items: mine });
   }
   return out;
@@ -218,7 +264,10 @@ export function itemHTML(item, state, opts = {}) {
   // Edit rather than a bare x. Deletion lives inside it, which is how it becomes
   // findable: reported as "there is no removal at all" when the x had been there
   // the whole time - 26px, muted, unlabelled, at the end of a name.
-  const removeBtn = item.mine
+  // On every row now. `mine` still means "somebody typed this", which planning
+  // and the missing-pack hint below both rely on; `editable` is the separate
+  // question of whether this list may change it, and the answer is always yes.
+  const removeBtn = item.editable
     ? `<button class="rm" data-edit="${esc(item.id)}" aria-label="Edit or remove ${esc(text)}">&#9998;</button>` : '';
 
   // A persistent correction to the list, not a trip outcome. It survives

@@ -191,7 +191,12 @@ export function createStore({ ns = 'household' } = {}) {
     const cutoff = Date.now() - TOMBSTONE_TTL_MS;
     for (const id of Object.keys(state.added)) {
       const r = state.added[id];
-      if (r && r.del && (r.t || 0) < cutoff) {
+      // A `cat` tombstone is not a dead ad-hoc item - it is the only thing
+      // holding a catalogue row off this list. Hard-collecting it after 30 days
+      // would make every row somebody removed quietly reappear, a month later,
+      // with nothing to explain it. These are bounded by the catalogue's size,
+      // so they can be kept forever.
+      if (r && r.del && !r.cat && (r.t || 0) < cutoff) {
         delete state.added[id];
         delete state.outbox[id];
       }
@@ -301,16 +306,37 @@ export function createStore({ ns = 'household' } = {}) {
    * phone it would read as one item vanishing and an unrelated one appearing.
    * A restamp is an ordinary edit that merges the same way any other does.
    */
-  function editAdded(id, patch) {
+  /**
+   * Create or update this list's own version of an item.
+   *
+   * The id decides what the record MEANS, and that is the whole design:
+   *
+   *   'a1b2c3...'                 something somebody added. Nothing else has
+   *                               that id, so the record is the item.
+   *   'protein--chicken-thighs'   a CATALOGUE id. The catalogue row still
+   *                               exists and is untouched; this record sits in
+   *                               front of it for this list only. Every other
+   *                               list, and the source document, are unaffected.
+   *
+   * No sixth collection: overrides sync, merge and encrypt exactly like any
+   * other added item, because that is what they are. And because the id is the
+   * catalogue's own id, the tick, the quantity, the plan entry and any
+   * not-stocked flag already keyed to that row keep working across the edit.
+   *
+   * `cat` marks the second kind. It is load-bearing in prune() - see there.
+   */
+  function upsertAdded(id, patch) {
     const cur = state.added[id];
-    if (!cur || cur.del) return false;
-    const name = String(patch.name ?? cur.name).trim();
+    const name = String(patch.name ?? cur?.name ?? '').trim();
     if (!name) return false;
     state.added[id] = stamp({
-      ...cur,
+      ...(cur || {}),
       name,
-      note: String(patch.note ?? cur.note ?? ''),
-      store: String(patch.store ?? cur.store),
+      note: String(patch.note ?? cur?.note ?? ''),
+      store: String(patch.store ?? cur?.store ?? 'sams'),
+      del: false,
+      by: cur?.by || state.me.name,
+      ...(patch.cat ? { cat: 1 } : {}),
     });
     state.outbox[id] = 'added';
     persist();
@@ -318,10 +344,55 @@ export function createStore({ ns = 'household' } = {}) {
     return true;
   }
 
-  function removeAdded(id) {
+  /** Kept for the old call sites: an edit of something that already exists. */
+  function editAdded(id, patch) {
     const cur = state.added[id];
-    if (!cur) return;
-    state.added[id] = stamp({ ...cur, del: true });
+    if (!cur || cur.del) return false;
+    return upsertAdded(id, patch);
+  }
+
+  /**
+   * Put back every catalogue row this list has hidden.
+   *
+   * Hiding is a tombstone, and a tombstone is invisible - so without this,
+   * taking a row off the list would be one-way with nothing on screen to undo
+   * it. Renames are left alone: this restores what is SHOWN, not what things
+   * are called.
+   */
+  function restoreHidden() {
+    let n = 0;
+    for (const id of Object.keys(state.added)) {
+      const r = state.added[id];
+      if (!r || !r.cat || !r.del) continue;
+      state.added[id] = stamp({ ...r, del: false });
+      state.outbox[id] = 'added';
+      n++;
+    }
+    if (n) { persist(); emit({ type: 'added' }); }
+    return n;
+  }
+
+  function hiddenCount() {
+    let n = 0;
+    for (const r of Object.values(state.added)) if (r && r.cat && r.del) n++;
+    return n;
+  }
+
+  /**
+   * Take an item off this list.
+   *
+   * For a catalogue row there may be no record yet - hiding it is the first
+   * thing this list has ever said about that row - so one is written. The
+   * catalogue itself is never touched.
+   */
+  function removeAdded(id, opts = {}) {
+    const cur = state.added[id];
+    if (!cur && !opts.cat) return;
+    state.added[id] = stamp({
+      ...(cur || { name: String(opts.name || ''), note: '', store: String(opts.store || 'sams'), by: state.me.name }),
+      del: true,
+      ...(opts.cat || cur?.cat ? { cat: 1 } : {}),
+    });
     state.outbox[id] = 'added';
     persist();
     emit({ type: 'added' });
@@ -592,7 +663,7 @@ export function createStore({ ns = 'household' } = {}) {
 
   return {
     state, subscribe, emit,
-    setStatus, addItem, editAdded, removeAdded, clearAllMarks, setUI, setName,
+    setStatus, addItem, editAdded, upsertAdded, removeAdded, restoreHidden, hiddenCount, clearAllMarks, setUI, setName,
     hasPlan, isPlanned, setPlanned, clearPlan, replanFromLastTrip,
     getQty, setQty, bumpQty,
     isFlagged, flagInfo, setFlag, parseList, importItems,
