@@ -213,8 +213,18 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
   -webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);
   filter:drop-shadow(0 4px 8px var(--shadow));}
 .fab::before{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
+/* Gold OUTLINE, deliberately not a gold fill. Floating over a row it had the
+   same fill, bevel and outline as an untouched Got/Swap/Skip, so it read as a
+   fourth action button - the wrong category, not merely low contrast. Gold is
+   the only colour left carrying no domain meaning: green/blue/red are the three
+   statuses, blue/red/teal are the three shops, violet is planning. That makes
+   it the app's own colour, which is exactly what this button is.
+   It pairs with the + without competing: filled gold creates, outlined gold
+   toggles a view. --accent-ink rather than --accent because raw #ffd43b is a
+   nearly invisible hairline on the light background. */
 .fab2{position:fixed; left:14px; bottom:calc(14px + env(safe-area-inset-bottom));
   height:46px; padding:0 16px; --fill:var(--panel2);
+  --bevel-edge:var(--accent-ink);
   font-size:.83rem; font-weight:600; z-index:35;
   filter:drop-shadow(0 3px 7px var(--shadow));}
 .sheet-bg{position:fixed; inset:0; background:rgba(0,0,0,.72); display:none; align-items:flex-end; justify-content:center; z-index:60;}
