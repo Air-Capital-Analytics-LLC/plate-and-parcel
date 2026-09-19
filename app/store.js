@@ -173,6 +173,10 @@ export function createStore({ ns = 'household' } = {}) {
   const listeners = new Set();
   let clock = 0;
   let persistBroken = false;
+  /** ROWS whose not-yet-sent work was lost because `load()` rejected what was
+   *  behind it. A Set so one row counts once however many kinds it held. Read
+   *  once, by the boot path, to tell the user something went. */
+  const droppedRows = new Set();
 
   const state = {
     items: Object.create(null),   // itemId -> {s, n, by, t, c}  (s null = cleared)
@@ -200,6 +204,8 @@ export function createStore({ ns = 'household' } = {}) {
   function load() {
     let raw = null;
     let migrated = false;
+    /** Records this gate threw away on the way in. See the count below. */
+    const rejected = [];
     try { raw = localStorage.getItem(LS_KEY); } catch { /* private mode */ }
     if (raw) {
       try {
@@ -214,6 +220,11 @@ export function createStore({ ns = 'household' } = {}) {
         for (const kind of KINDS) {
           for (const [id, rec] of Object.entries(o[kind] || {})) {
             if (isWellFormed(rec, kind)) state[kind][id] = rec;
+            // Keep the author with the key. The count below has to ask "was
+            // this OUR work", and by then the record is gone — and `state.me`
+            // has not been read from the blob yet at this point either, so the
+            // comparison cannot happen here.
+            else rejected.push({ key: obKey(kind, id), id, c: rec && rec.c });
           }
         }
         // MIGRATION, and the first gate this map has ever had. Entries written
@@ -236,7 +247,18 @@ export function createStore({ ns = 'household' } = {}) {
         // a forged record at `items:whatever` is dropped before it is ever seen.
         // Neither of those facts is local to this line, hence this note.
         for (const [k, kind] of Object.entries(o.outbox || {})) {
-          if (typeof kind !== 'string' || !KINDS.includes(kind)) continue;
+          if (typeof kind !== 'string' || !KINDS.includes(kind)) {
+            // THIS gate drops a pending write without ever looking at its
+            // record, and it is the one a KIND change actually fires: ship
+            // `price`, write some `price:` entries, then run an older bundle
+            // for any reason and every one of them is discarded here. Counting
+            // only the `isWellFormed` rejections below would have reported
+            // zero for exactly the case M16 exists to cover. The row id cannot
+            // be recovered (the kind that would tell us where the prefix ends
+            // is the thing we just rejected), so it counts as its own row.
+            if (typeof k === 'string' && k) droppedRows.add(`?:${k}`);
+            continue;
+          }
           if (!k.startsWith(`${kind}:`)) migrated = true;
           state.outbox[k.startsWith(`${kind}:`) ? k : obKey(kind, k)] = kind;
         }
@@ -266,10 +288,48 @@ export function createStore({ ns = 'household' } = {}) {
     // ticks; then on the next boot `load()`'s own gate rejects its own records
     // and the list blanks on the phone that made it. It was the last field here
     // with no gate, and the one with the worst consequence.
+    // Captured BEFORE the regeneration below, because the count that follows
+    // asks "did this phone write the rejected record", and in M16's own
+    // originating case the answer is yes *under the malformed id*. Comparing
+    // against the fresh id would match nothing and report zero on exactly the
+    // failure this exists for — which is what the first cut of it did.
+    const persistedMeId = state.me.id;
     if (!CLIENT_ID.test(state.me.id || '')) {
       state.me.id = 'c' + Math.random().toString(36).slice(2, 10);
     }
     if (typeof state.me.name !== 'string') state.me.name = '';
+    // COUNT WHAT THE GATE ATE, before `prune()` sweeps the evidence.
+    //
+    // A record rejected on the way in never reaches `state[kind]`, so `prune()`
+    // then finds nothing behind its outbox entry and deletes that too. The
+    // record is recoverable — the server still has it, or it was junk — but the
+    // PENDING WRITE behind it is not: it is work this phone did and had not
+    // sent yet, and it disappears with no event of any kind. The badge reads
+    // Live throughout.
+    //
+    // This is the general shape, not one bug: it fires every time the gate
+    // TIGHTENS. Adding a KIND tightens it. Narrowing a bound tightens it. A
+    // malformed `me.id` used to trigger it across every record at once, which
+    // is what surfaced it (M16) — that specific door is now shut by the
+    // `CLIENT_ID` check below, but the corridor it opened onto is this one.
+    for (const r of rejected) {
+      if (!state.outbox[r.key]) continue;
+      // OUR work only. `requeueAll` arms every record of every kind regardless
+      // of author — correct for a loss restore — so after one has run the
+      // outbox is the whole store, peers' records included. Without this test
+      // the next tightening of the gate would tell somebody "85 changes saved
+      // on this phone were lost" about work three other people did, which the
+      // server still holds. In M16's own originating case the comparison still
+      // matches: the records carry the malformed id and `state.me.id` has not
+      // been regenerated yet.
+      if (r.c !== persistedMeId) continue;
+      // ROWS, not records. One row can hold a tick and a quantity and a plan
+      // entry, and this number goes in front of a person beside a badge that
+      // has counted rows all trip. The ledger records this exact unit question
+      // as already decided (M15, LOSS RECORDED) and counting writes here was
+      // re-introducing the losing side of it.
+      droppedRows.add(r.id);
+    }
     prune();
     for (const k of KINDS) for (const r of Object.values(state[k])) observeClock(r.t || 0);
     // ONE-SHOT RECOVERY, on the upgrade boot only.
@@ -359,6 +419,15 @@ export function createStore({ ns = 'household' } = {}) {
   }
 
   function isPersistBroken() { return persistBroken; }
+
+  /**
+   * How many not-yet-sent changes were lost when this device's saved data was
+   * read back. Reported once, on boot, and then cleared: it describes a past
+   * event, so a permanent badge would be wrong — but saying nothing at all
+   * would mean work vanishing with no signal, which §1 puts above every other
+   * failure.
+   */
+  function takeDroppedWork() { const n = droppedRows.size; droppedRows.clear(); return n; }
 
   /* ---- observer ---- */
 
@@ -870,6 +939,6 @@ export function createStore({ ns = 'household' } = {}) {
     getQty, setQty, bumpQty,
     isFlagged, flagInfo, setFlag, parseList, importItems,
     mergeRemote, pendingOps, ackOps, pendingCount, requeueAll, restampPending,
-    flushPersist, isPersistBroken, reset, wins, isWellFormed,
+    flushPersist, isPersistBroken, takeDroppedWork, reset, wins, isWellFormed,
   };
 }

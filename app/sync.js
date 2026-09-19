@@ -25,6 +25,13 @@ const WRITE_TIMEOUT = 12000;
  *  except a user staring at a list that has not appeared yet. */
 const READ_TIMEOUT = 4000;
 
+/** How long to hold the write path waiting for a connection's root snapshot
+ *  before flushing anyway. Long enough that any working link delivers first
+ *  (the snapshot is ~25KB and follows `open` by well under a second), short
+ *  enough that a stream which opens and delivers nothing cannot strand queued
+ *  work for a whole trip. */
+const SNAPSHOT_WAIT = 10000;
+
 /** How long a stream must survive before we believe it. See `connect`. */
 const STABLE_AFTER = 15000;
 
@@ -68,6 +75,38 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
   let lastMessageAt = 0;
   let sawFirstSnapshot = false;
 
+  /**
+   * "A root snapshot is owed on this connection, so do not flush yet."
+   *
+   * The queued work has to be re-stamped — ordered after everything that
+   * happened during the outage — and only the snapshot can tell the store to do
+   * that. The first attempt at this removed the `drain()` from the `open`
+   * handler, which was useless: `open` is ONE of fourteen doors onto `drain()`.
+   * The `online` handler drained synchronously right after `connect()`, every
+   * tap drains, and both visibility transitions drain — so on the commonest
+   * warehouse path (pocket → doors → signal returns) the flush still beat the
+   * snapshot, went out with the original clocks, and was ACKED, leaving the
+   * re-stamp nothing to re-stamp.
+   *
+   * An ordering property cannot be fixed at one call site. It is enforced here,
+   * once, for all of them.
+   */
+  let snapshotPending = false;
+  let snapshotTimer = null;
+
+  /** The snapshot arrived, or proved it is not coming. Either way, flush. */
+  function releaseSnapshotGate(why) {
+    clearTimeout(snapshotTimer);
+    snapshotTimer = null;
+    if (!snapshotPending) return;
+    snapshotPending = false;
+    // `why` is unused at runtime and deliberately kept in the signature: every
+    // caller has to name which of the three exits it is, which is the whole
+    // reason this has three callers and not one.
+    void why;
+    drain();
+  }
+
   const setStatus = (s, d) => { try { onStatus(s, d); } catch { /* never let a listener break sync */ } };
   const slotFor = (kind, id) => `${listId}/${kind}/${id}`;
 
@@ -92,11 +131,23 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
    * RTDB SSE delivers {path, data}. `path` is relative to the stream root, so
    * we normalise every shape into {items, added} before handing it upward.
    */
-  async function applyEvent(payload) {
+  async function applyEvent(payload, isSnapshot = true) {
     if (!payload || typeof payload !== 'object') return;
     const path = typeof payload.path === 'string' ? payload.path : '/';
     const data = payload.data;
     const segs = path.split('/').filter(Boolean);
+
+    // A root `patch` is a partial merge, not a picture of the whole node. Route
+    // it as an ordinary per-kind merge: it can add records, and it can neither
+    // claim the list is empty nor spend this connection's `first`.
+    if (segs.length === 0 && !isSnapshot) {
+      if (data && typeof data === 'object') {
+        const partial = {};
+        for (const k of KINDS) if (data[k]) partial[k] = await decodeMap(data[k], k);
+        if (Object.keys(partial).length) onRemote(partial, {});
+      }
+      return;
+    }
 
     if (segs.length === 0) {
       // A root snapshot is the only moment we can tell "the shared list holds
@@ -105,7 +156,13 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
       // shared work; `plan` and `flags` alone are not evidence the list exists.
       const noItems = !data || !data.items || !Object.keys(data.items).length;
       const noAdded = !data || !data.added || !Object.keys(data.added).length;
-      if (data == null || (noItems && noAdded)) { onEmptySnapshot?.(); return; }
+      if (data == null || (noItems && noAdded)) {
+        // Release before handing over: the caller re-arms the outbox and drains,
+        // and that drain must not be refused by the gate it is the answer to.
+        releaseSnapshotGate('empty');
+        onEmptySnapshot?.();
+        return;
+      }
 
       // Only consumed once real data has actually arrived, and re-armed per
       // connection. Setting it above the empty-return burned the flag on a
@@ -117,6 +174,15 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
       const remote = {};
       for (const k of KINDS) remote[k] = await decodeMap(data[k], k);
       onRemote(remote, { first });
+      // `onRemote` MUST be synchronous for the ordering below to mean anything:
+      // it is what tells the store to re-stamp. It is not awaited on purpose —
+      // the JSDoc on the option says `=> void` — and making it async would
+      // silently reopen M17. Stated here because the next person to touch it
+      // will be reading this line, not that one.
+      //
+      // Now the outage's writes are merged and the re-stamp is armed, so the
+      // gate comes off and everything that was deferred behind it flushes.
+      releaseSnapshotGate('snapshot');
       return;
     }
 
@@ -168,10 +234,26 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
     const mine = es;
     lastMessageAt = Date.now();
     sawFirstSnapshot = false;   // the next root snapshot is "first" for this connection
+    // Hold the write path until this connection has produced its root snapshot.
+    // The timeout is the anti-stranding backstop, and it is NOT optional: a
+    // captive portal or proxy can accept the connection, send headers, emit
+    // keep-alives and never deliver a snapshot at all — `open` fires, the badge
+    // reads Live, and without this the queued work would wait on an event that
+    // is never coming. §4's first invariant, one level up: a latch must never be
+    // owned solely by something the platform may decline to deliver.
+    snapshotPending = true;
+    clearTimeout(snapshotTimer);
+    snapshotTimer = setTimeout(() => releaseSnapshotGate('timeout'), SNAPSHOT_WAIT);
 
     es.addEventListener('open', () => {
       setStatus(Status.LIVE);
-      drain();
+      // No drain here — but note that removing it is NOT what orders the
+      // flush. `snapshotPending` is; see its declaration. An earlier version of
+      // this comment claimed a "stale-stream timer" would cover a link that
+      // opens and delivers nothing. There is no such timer: `STALE_AFTER` is
+      // read in one place, inside the visibility handler, so a page that simply
+      // stays open never re-checks. `SNAPSHOT_WAIT` is the backstop that
+      // actually exists.
       // `open` fires when response HEADERS arrive, not when the stream proves
       // it can stay up. Resetting the backoff here meant a link that connects
       // and drops every few seconds could never leave attempt 0 — roughly 800
@@ -181,14 +263,24 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
       stableTimer = setTimeout(() => { if (es === mine) attempt = 0; }, STABLE_AFTER);
     });
 
-    const onData = (e) => {
+    // `put` and `patch` are NOT the same event and the difference matters at
+    // the root. A `put` at `/` is the whole node: absence of `items` there is
+    // evidence there are no items. A `patch` at `/` means "merge these
+    // children" and says nothing whatever about what it did not mention — so
+    // treating one as a snapshot let anyone with the database URL fire
+    // `PATCH /lists/household.json -d '{"plan":{...}}'` and make every phone
+    // in the family decide the list had been wiped: a false "Restoring 58 from
+    // this phone", a full re-encrypt and re-upload of every collection, on
+    // repeat, aimed at the two people least able to make sense of it. §4 states
+    // the loss rule about a SNAPSHOT; applying it to a patch was the bug.
+    const onData = (isSnapshot) => (e) => {
       lastMessageAt = Date.now();
       let payload;
       try { payload = JSON.parse(e.data); } catch { return; }
-      applyEvent(payload).catch(() => { /* a malformed record must not kill the stream */ });
+      applyEvent(payload, isSnapshot).catch(() => { /* a malformed record must not kill the stream */ });
     };
-    es.addEventListener('put', onData);
-    es.addEventListener('patch', onData);
+    es.addEventListener('put', onData(true));
+    es.addEventListener('patch', onData(false));
     es.addEventListener('keep-alive', () => { lastMessageAt = Date.now(); });
 
     es.addEventListener('cancel', () => { setStatus(Status.ERROR, { reason: 'rules' }); });
@@ -284,7 +376,14 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
 
   async function drain() {
     if (stopped || draining) { drainAgain = true; return; }
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    // `drainAgain` on the way out, so a drain refused here is not simply lost.
+    // Without it a flap that briefly flips `navigator.onLine` false could eat
+    // the one drain a connection was going to get, and — since `sawFirstSnapshot`
+    // is already true by then — nothing would flush until the next tap.
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { drainAgain = true; return; }
+    // Wait for this connection's snapshot, so `onBeforeDrain` has something to
+    // re-stamp and the work is ordered after the outage. See `snapshotPending`.
+    if (snapshotPending) { drainAgain = true; return; }
     draining = true;
     try {
       onBeforeDrain?.();
@@ -443,7 +542,11 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
 
   /* ---------- lifecycle ---------- */
 
-  const onlineHandler = () => { attempt = 0; connect(); drain(); };
+  // No `drain()` here. This is M17's primary trigger — the link died, the OS
+  // says it is back — and draining synchronously after `connect()` sent the
+  // queued offline work before the snapshot could order it. `connect()` arms
+  // `snapshotPending`, and the flush follows the snapshot (or `SNAPSHOT_WAIT`).
+  const onlineHandler = () => { attempt = 0; connect(); };
   const offlineHandler = () => { closeStream(); setStatus(Status.OFFLINE); };
   const visibilityHandler = () => {
     if (document.visibilityState !== 'visible') return;
@@ -470,6 +573,11 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
     document.removeEventListener('visibilitychange', visibilityHandler);
     clearTimeout(reconnectTimer); reconnectTimer = null;
     clearTimeout(writeRetryTimer); writeRetryTimer = null;
+    // Clear the gate as well as its timer: a stopped sync that is later
+    // restarted must not inherit a pending flag from the previous life, and a
+    // fired timeout must not drain after `stop()`.
+    clearTimeout(snapshotTimer); snapshotTimer = null;
+    snapshotPending = false;
     closeStream();
   }
 

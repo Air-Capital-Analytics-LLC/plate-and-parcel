@@ -331,6 +331,15 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
   border-radius:5px; padding:2px 6px; margin-left:auto; flex-shrink:0;}
 .listrow .tag.dim{background:var(--panel2); color:var(--muted); margin-left:6px;}
 #newListPreview{word-break:break-all; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.72rem;}
+/* The lost-work bar. Sits where the install bar sits, reuses `.warnbox`'s
+   colours, and is the only notice in the app that waits for a human instead of
+   timing out - it is about work that is gone for good, which is not a
+   2.1-second fact. Sized in rem like everything readable, so the text-size
+   control reaches it. */
+.lostbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
+.lostbar span{flex:1 1 60%; min-width:180px;}
+.lostbar button{padding:9px 16px; font-size:.82rem; font-weight:700;
+  --fill:var(--panel2); color:var(--warn-strong);}
 .installbar{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
   background:var(--panel2); border:1px solid var(--line); border-radius:var(--radius);
   padding:11px 12px; margin-bottom:10px; font-size:.83rem; color:var(--muted); line-height:1.4;}
@@ -699,7 +708,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 
 <div class="sheet-bg" id="menuSheet"><div class="sheet">
   <h2>Menu</h2>
-  <div class="warnbox"><b>Everyone shares this list.</b> Ticks appear on the other phones within a second or two. If you are offline, your taps are saved and sent when signal returns.</div>
+  <div class="warnbox"><b>Everyone shares this list.</b> Ticks appear on the other phones within a second or two. If you are offline, your taps are saved and sent when signal returns. If something ever does not make it, the app tells you the next time you open it.</div>
   <div class="fld"><button class="wide" id="menuWelcome">👋 Welcome &amp; how to use this</button></div>
   <div class="fld"><button class="wide" id="menuTrip">📋 Trip summary &amp; export</button></div>
   <div class="fld"><button class="wide" id="menuName">🙋 Change my name</button></div>

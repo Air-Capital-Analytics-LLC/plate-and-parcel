@@ -1305,7 +1305,15 @@ function wireEvents() {
   // thumbnail is taken on exactly this transition. Masking only on
   // `visibilitychange` left the leak the reveal button's comment claims to
   // close still open on the handsets §0 names.
-  addEventListener('pagehide', () => { maskPass(); store.flushPersist(); });
+  // NOT on the bare-URL screen. The store is module-scoped and namespaced to
+  // the resolved list, so a visit with no `?list=` has already loaded, gated
+  // and PRUNED the real list's saved data — and `boot()` returns before
+  // anything can report what that pruning dropped. Flushing here would write
+  // the pruned copy back and erase the only evidence, so the next real boot
+  // would report nothing: M16's silent loss, restored, through a side door.
+  // Nothing on that screen can change state, so there is nothing to lose by
+  // not writing.
+  addEventListener('pagehide', () => { maskPass(); if (!NO_LIST) store.flushPersist(); });
   // iOS home-screen PWAs restore through pageshow; visibilitychange is documented
   // as not firing on app-switcher resume in several versions. Without this a
   // render discarded while hidden is never re-issued and the user comes back to
@@ -1321,7 +1329,7 @@ function wireEvents() {
       // unsent until the phone is next unlocked.
       // Mask first: this is the moment the task-switcher thumbnail is taken.
       maskPass();
-      store.flushPersist();
+      if (!NO_LIST) store.flushPersist();   // see the `pagehide` note above
       sync?.drain();
       return;
     }
@@ -1345,6 +1353,44 @@ function applyTextSize() {
   $('btnBig').classList.toggle('set', n > 0);
   $('btnBig').title = `Text size: ${TEXT_SIZES[n]}`;
   $('btnBig').setAttribute('aria-label', `Text size, currently ${TEXT_SIZES[n]}. Tap to change.`);
+}
+
+/**
+ * Tell the person that work of theirs did not survive being read back.
+ *
+ * Called at the ONE moment the list is genuinely on screen — right after the
+ * lock lifts — not on a timer. A boot-relative delay was tried and was wrong:
+ * on a locked boot `deriveKey` runs 210,000 PBKDF2 iterations and an
+ * unreachable list waits out a 4-second read, so a 900ms timer landed on the
+ * passphrase box, over the Unlock button, on exactly the boot where this
+ * matters most. And on the dead-network screen it burned the only report of
+ * lost work on a screen that shows no list.
+ *
+ * A BAR, not a toast. `toast()` holds 2100ms, is `pointer-events:none`, wears
+ * the same gold as "Saved" and "Link copied", and is a single slot that
+ * "Restoring N from this phone" or the clobber notice can overwrite inside
+ * that window. This is the only message in the app about work that is gone for
+ * good; it waits, it can be re-read, and it goes away when a human says so.
+ */
+function reportDroppedWork() {
+  const n = store.takeDroppedWork();
+  if (!n) return;
+  // Make the loss final on disk in the same turn it is announced. `load()`
+  // pruned the orphaned entries in memory only, and nothing on a quiet boot
+  // persists — so without this the next launch re-reads the same blob, counts
+  // the same loss and says it again. In a dead zone, every single reopen.
+  store.flushPersist();
+  const bar = document.createElement('div');
+  bar.className = 'warnbox lostbar';
+  bar.innerHTML = `<span>${n === 1
+    ? 'One thing you changed did not go through, so the other phones never got it.'
+    : `${View.esc(String(n))} things you changed did not go through, so the other phones never got them.`
+  } If something on the list looks wrong, tap it again.</span>`
+    + '<button class="pxl" id="lostOk">OK</button>';
+  listEl.parentNode.insertBefore(bar, listEl);
+  $('lostOk').onclick = () => bar.remove();
+  // One bar at a time, and this one outranks a convenience nag.
+  document.querySelector('.installbar')?.remove();
 }
 
 async function boot() {
@@ -1435,7 +1481,7 @@ async function boot() {
   // The view is blind until here. Unblind it and paint immediately: nothing
   // else on the boot path is guaranteed to fire, so without this the screen
   // would sit on "Locked" until some unrelated event happened to repaint.
-  if (codec) { locked = false; render(); }
+  if (codec) { locked = false; render(); reportDroppedWork(); }
   if (!codec) {
     // Offline with nothing verifiable yet. The comment used to promise
     // local-only "until we reconnect" while nothing ever reconnected.
