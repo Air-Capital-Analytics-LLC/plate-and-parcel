@@ -241,20 +241,26 @@ function repaint() {
   const s = store.state;
   // No list at all outranks everything: there is nothing to lock or show.
   if (NO_LIST) { paintNoList(); return; }
+  // Read once: `listLabel()` goes through `knownLists()`, which parses
+  // localStorage, and it is now wanted in two places on every paint.
+  const label = listLabel();
   if (locked) {
     $('tabs').innerHTML = '';
     $('pfill').style.width = '0%';
-    $('pleft').textContent = listLabel();
+    // Named even while locked, and especially while locked: being asked for a
+    // passphrase is the moment you most need to know WHICH list is asking.
+    $('listName').textContent = label;
+    $('pleft').textContent = '';
     $('pright').textContent = 'Locked';
     const body = {
       pass: 'This list is locked.<br><br>Enter the passphrase to see it.',
       unreachable: 'Cannot reach this list right now.<br><br>'
         + 'Without it the passphrase cannot be checked, so there is nothing to type yet. '
         + 'This is usually signal.<br><br>'
-        + '<button class="wide" id="lockRetry">Try again</button>',
+        + '<button class="pxl wide primary" id="lockRetry">Try again</button>',
       offline: 'You are offline, and this phone has not opened this list before.<br><br>'
         + 'Connect to something and it will ask for the passphrase.<br><br>'
-        + '<button class="wide" id="lockRetry">Try again</button>',
+        + '<button class="pxl wide primary" id="lockRetry">Try again</button>',
     }[lockReason] || 'This list is locked.';
     listEl.innerHTML = '<div class="empty">' + body + '</div>';
     const retry = $('lockRetry');
@@ -273,10 +279,13 @@ function repaint() {
   $('pfill').style.width = pct + '%';
   const storeLabel = (View.STORES.find((x) => x.id === s.ui.store) || View.STORES[0]).label;
   // Always name the list, the default one included. The header is a fixed
-  // banner now, so without this there is nothing on screen saying WHICH list
-  // you are looking at - and the whole point of several lists is telling them
-  // apart.
-  $('pleft').textContent = `${listLabel()} · ${storeLabel}`;
+  // banner, so without this there is nothing on screen saying WHICH list you
+  // are looking at - and the whole point of several lists is telling them
+  // apart. It has its own row under the banner now; `.pmeta` keeps the store,
+  // which is a different question ("which tab am I on") and belongs beside the
+  // progress count rather than above it.
+  $('listName').textContent = label;
+  $('pleft').textContent = storeLabel;
   $('pright').textContent = planning
     ? 'Tick what you need this time'
     : `${c.done} of ${c.total} handled · ${pct}%`;
@@ -612,7 +621,10 @@ async function showVersion() {
  * the decision lived in one layer while another layer reached the same screen.
  */
 function paintNoList() {
-  for (const sel of ['#tabs', '.pbar', '.pmeta', '#planBtn', '#fabAdd', '#doneBtn', '#btnTrip']) {
+  // `.listname` belongs in this list, not behind a separate check: the receipt
+  // above is precisely about the neutral screen's decision living in one layer
+  // while another layer reached the same screen. A bare link names no list.
+  for (const sel of ['#tabs', '.pbar', '.pmeta', '.listname', '#planBtn', '#fabAdd', '#doneBtn', '#btnTrip']) {
     const el = document.querySelector(sel);
     if (el) el.hidden = true;
   }
@@ -622,7 +634,7 @@ function paintNoList() {
   listEl.innerHTML = '<div class="empty"><b>Open the link you were sent.</b><br><br>'
     + 'A list only opens from its own link, and that link is not this one. '
     + 'Ask whoever invited you to send it again.<br><br>'
-    + '<button class="wide" id="noListWhat">What is this?</button></div>';
+    + '<button class="pxl wide primary" id="noListWhat">What is this?</button></div>';
   $('noListWhat').onclick = openWelcome;
 }
 
@@ -937,6 +949,49 @@ async function unlock(tempSync) {
 const MIN_PASS = 10;
 
 /**
+ * Put the passphrase box back to dots, and say so on the button.
+ *
+ * `type="password"` is not only visual masking — the browser and the OS
+ * keyboard treat that field as a different class of thing. While it is `text`
+ * the value is eligible for bfcache session-restore (this app restores through
+ * `pageshow` on iOS, so it would come back POPULATED AND REVEALED), for the
+ * soft keyboard's learned dictionary — and `promptPass` actively recommends a
+ * multi-word passphrase, which is exactly what predictive keyboards retain —
+ * and for task-switcher thumbnails, which §0 says are captured constantly
+ * because the page is always being backgrounded. So revealing is momentary:
+ * masked on open, on the way into a pocket, and on restore.
+ *
+ * Deliberately NOT on a timer. A timer would re-mask mid-typing for a slow
+ * typist, and the slow typist is the person this button exists for.
+ */
+function maskPass() {
+  const el = $('passInput');
+  if (!el) return;
+  // Flip `type` on the live node. Re-rendering the sheet or replacing the input
+  // would drop focus and close the Android keyboard mid-passphrase.
+  el.type = 'password';
+  const btn = $('passReveal');
+  if (btn) { btn.textContent = 'Show'; btn.setAttribute('aria-label', 'Show the passphrase'); }
+}
+
+function toggleReveal() {
+  const el = $('passInput');
+  const btn = $('passReveal');
+  if (!el || !btn) return;
+  if (el.type === 'password') {
+    el.type = 'text';
+    btn.textContent = 'Hide';
+    btn.setAttribute('aria-label', 'Hide the passphrase');
+  } else {
+    maskPass();
+  }
+  // Typing continues where it left off; without this the caret jumps to the
+  // start on some engines after a type change.
+  const n = el.value.length;
+  try { el.focus(); el.setSelectionRange(n, n); } catch { /* not all types allow it */ }
+}
+
+/**
  * @param {boolean} reachable whether the list could be read at all. Only a
  *   confirmed-absent identity may be claimed; an unreachable one must never be,
  *   or a timeout on one person's first open silently re-keys everyone's data.
@@ -957,6 +1012,10 @@ function promptPass(tempSync, meta, reachable) {
       ? `Nobody has opened “${who}” before, so you are setting it up. Pick a passphrase of at least ${MIN_PASS} characters — a few words is easiest — and share it with the others. They type it once on their own phone.`
       : `Ask whoever set “${who}” up. You only have to type it once on this device.`;
     $('passInput').value = '';
+    // Every open starts masked. `promptPass` re-runs per boot, so without this
+    // a second unlock attempt would open with the passphrase already in plain
+    // text — in a shop, over somebody's shoulder.
+    maskPass();
     $('passErr').textContent = '';
     openSheet('passSheet');
     setTimeout(() => $('passInput').focus(), 150);
@@ -1004,6 +1063,11 @@ function promptPass(tempSync, meta, reachable) {
           writeStoredIdentity(p, viaServer ? meta.salt : cachedSalt, viaServer ? meta.check : cachedCheck);
         }
         closeSheet('passSheet');
+        // The passphrase has done its job. Leaving it in the live DOM for the
+        // rest of the session put it one `.open` class away from being back on
+        // screen, and the sheet node is never torn down.
+        $('passInput').value = '';
+        maskPass();
         $('passGo').disabled = false;
         resolve(sealedCodec);
       } catch {
@@ -1013,6 +1077,13 @@ function promptPass(tempSync, meta, reachable) {
     };
 
     $('passGo').onclick = submit;
+    // Guarded because this runs inside the promise executor: a missing node
+    // would reject `promptPass`, which `boot()` catches into the "unreachable"
+    // dead-end screen — a total boot failure dressed up as a signal problem.
+    // Reachable in the mixed-version window (new main.js, cached index.html)
+    // that is already documented at the bottom of this file as observed.
+    const reveal = $('passReveal');
+    if (reveal) reveal.onclick = toggleReveal;
     // The phone keyboard's Go key must work. Without this a user types the
     // passphrase, presses Go, nothing happens, and they conclude it is broken.
     $('passInput').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } };
@@ -1228,17 +1299,28 @@ function wireEvents() {
     toast('Added to your home screen');
   });
 
-  addEventListener('pagehide', () => store.flushPersist());
+  // `pagehide` is the one the iPhone actually fires when the page is
+  // backgrounded — `visibilitychange` is documented just below as not firing on
+  // app-switcher resume in several iOS versions, and the task-switcher
+  // thumbnail is taken on exactly this transition. Masking only on
+  // `visibilitychange` left the leak the reveal button's comment claims to
+  // close still open on the handsets §0 names.
+  addEventListener('pagehide', () => { maskPass(); store.flushPersist(); });
   // iOS home-screen PWAs restore through pageshow; visibilitychange is documented
   // as not firing on app-switcher resume in several versions. Without this a
   // render discarded while hidden is never re-issued and the user comes back to
   // a stale list, with the stream possibly suspended behind a "Live" badge.
-  addEventListener('pageshow', () => { render(); sync?.drain(); });
+  // `maskPass` here is the restore half of the reveal toggle: a page restored
+  // from bfcache brings non-password fields back with their values, so a box
+  // left revealed would return holding the passphrase in plain text.
+  addEventListener('pageshow', () => { maskPass(); render(); sync?.drain(); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       // Into a pocket. Flush to disk AND push: `keepalive` on the PATCH exists
       // for exactly this moment. Otherwise a note typed at the freezer sits
       // unsent until the phone is next unlocked.
+      // Mask first: this is the moment the task-switcher thumbnail is taken.
+      maskPass();
       store.flushPersist();
       sync?.drain();
       return;

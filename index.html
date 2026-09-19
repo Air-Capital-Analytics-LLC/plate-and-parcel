@@ -156,7 +156,20 @@ h1{display:flex; align-items:center;}
    banner - which is the agreed fallback, not a failure. Only the one that is
    used gets fetched. */
 html[data-theme="light"] .hrow h1 .brand{content:url("./brand-light.png");}
-button{font-family:inherit; cursor:pointer; border:none; color:var(--ink); background:var(--panel2); border-radius:10px;}
+/* `font-size:inherit` belongs here, beside `font-family:inherit`, and its
+   absence was a real defect: a <button> does NOT inherit its size, so every
+   button without an explicit size rendered at the browser default (~13px) and
+   ignored the text-size control entirely. The menu, the sheets and the Lists
+   rows all sat frozen at 13px while the list itself grew - for the two users
+   the control exists for. Fixing it HERE rather than under `.sheet` is
+   deliberate twice over: a `.sheet`-scoped rule ties on specificity with
+   `.seg button` below, so source order would silently decide the winner (the
+   same trap already documented further down this file), and it would miss
+   `#lockRetry` and `#noListWhat`, which live in `.empty` on the offline
+   dead-end screen. Every button that must NOT grow already states its own size
+   in px or rem - the header chrome, the tabs, the row actions - so they are
+   unaffected. */
+button{font-family:inherit; font-size:inherit; cursor:pointer; border:none; color:var(--ink); background:var(--panel2); border-radius:10px;}
 button:active{transform:scale(.97);}
 button:focus-visible,[data-id] button:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
 input,textarea{font-family:inherit; font-size:max(16px,1rem); width:100%; color:var(--ink);
@@ -193,6 +206,21 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .tab.on[data-store="sams"]{--bevel-edge:var(--sams);}
 .tab.on[data-store="costco"]{--bevel-edge:var(--costco);}
 .tab.on[data-store="custom"]{--bevel-edge:var(--custom);}
+/* WHICH LIST AM I LOOKING AT. This lived at the left end of `.pmeta`, sharing a
+   .72rem muted line with the store name, and it was not answering the question:
+   somebody holding two lists could not tell them apart at a glance, which is
+   the entire point of having more than one. Its own row, directly under the
+   banner, centred, and in the app's own colour - `--accent-ink` rather than
+   `--ink` so it reads as "this is the thing you are in" rather than as the
+   first line of the list itself. Sized in rem on purpose, unlike the header
+   BUTTONS: the rule those obey is that a control must not grow under the thumb
+   still pressing it, and this is text, for the two people who turned the text
+   size up because they cannot read small text. It is a fixed string, so it
+   cannot reflow mid-scroll the way a live counter would. */
+.listname{text-align:center; font-size:1rem; font-weight:700; color:var(--accent-ink);
+  margin-top:7px; line-height:1.25;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.listname:empty{display:none;}
 .pbar{height:4px; background:var(--panel2); border-radius:2px; margin-top:8px; overflow:hidden;}
 .pbar>div{height:100%; background:var(--got); width:0; transition:width .25s;}
 .pmeta{display:flex; justify-content:space-between; font-size:.72rem; color:var(--muted); margin-top:5px;}
@@ -262,10 +290,31 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .sheet label{font-size:.75rem; color:var(--muted); display:block; margin-bottom:4px;}
 .sheet .row{display:flex; gap:8px;}
 .sheet .row button{flex:1; padding:13px; font-weight:600;}
-.sheet .wide{width:100%; padding:13px; font-weight:600; text-align:left;}
+/* The reveal button sits UNDER the box rather than floating inside it. An
+   overlay inside the field puts a tap target on top of the one input that
+   gates the whole app, and a mis-tap there dismisses the keyboard mid-
+   passphrase. It carries a WORD, not an eye, for the reason stated above the
+   header buttons: an icon alone is a guess, and this is the screen where a
+   confused person is already stuck. Quiet and right-aligned - it is an escape
+   hatch, not the action. */
+.revealrow{display:flex; justify-content:flex-end; margin-top:6px;}
+.revealrow button{padding:8px 14px; font-size:.78rem; font-weight:600; color:var(--muted);}
+/* NOT `.sheet .wide`. `.wide` was only ever defined inside a sheet, so the two
+   `.wide` buttons that live OUTSIDE one got no width, no padding and no weight
+   at all: `#lockRetry` and `#noListWhat`, both in `.empty`. They are the only
+   controls on the unreachable/offline dead-end screen - §0's dominant failure
+   mode - so the one screen a stranded phone shows had a stunted default-sized
+   button on it. (The install button is NOT one of them: it is injected into a
+   sheet, so `.sheet .wide` always covered it. An earlier version of this
+   comment claimed otherwise.) Both now also carry `pxl primary`, because
+   unscoping alone left them flat and left-aligned - `.wide` sets
+   `text-align:left`, which beats `.empty`'s inherited centring, and the bevel
+   selector list does not mention them. Unscoping is the fix; nothing inside a
+   sheet changes. */
+.wide{width:100%; padding:13px; font-weight:600; text-align:left;}
 /* Menu rows are a list and read left-aligned. A primary action is not a list
    item - it is the one thing to do - so it centres. */
-.sheet .wide.primary{text-align:center;}
+.wide.primary{text-align:center;}
 .primary{--fill:var(--accent) !important; color:var(--on-accent) !important;}
 .seg{display:flex; gap:6px;}
 .seg button{flex:1; padding:11px 4px; font-size:.82rem; color:var(--muted);}
@@ -515,6 +564,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
       <span class="aa">⋯</span><span class="lbl">Menu</span>
     </button>
   </div>
+  <div class="listname" id="listName"></div>
   <button class="planbar" id="planBtn">✎ Choose what to buy</button>
   <div class="tabs" id="tabs"></div>
   <div class="pbar"><div id="pfill"></div></div>
@@ -537,7 +587,8 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 <div class="sheet-bg" id="passSheet"><div class="sheet">
   <h2 id="passTitle">Enter the list passphrase</h2>
   <div class="fld"><label id="passHint"></label>
-    <input id="passInput" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+    <input id="passInput" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <div class="revealrow"><button type="button" id="passReveal" aria-label="Show the passphrase">Show</button></div></div>
   <div class="err" id="passErr"></div>
   <div class="row"><button class="primary" id="passGo">Unlock</button></div>
   <div class="hint">Typed once per phone. It never leaves your device.</div>
@@ -554,8 +605,8 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
      come from the source document and are changed there, not here. -->
 <div class="sheet-bg" id="editSheet"><div class="sheet">
   <h2>Edit item</h2>
-  <div class="fld"><label>What is it?</label><input id="editName" autocomplete="off"></div>
-  <div class="fld"><label>Note (size, price, why)</label><input id="editNote" placeholder="optional" autocomplete="off"></div>
+  <div class="fld"><label>What is it?</label><input id="editName" autocomplete="off" maxlength="120"></div>
+  <div class="fld"><label>Note (size, price, why)</label><input id="editNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
   <div class="fld"><label>Which store?</label><div class="seg" id="editStore"></div></div>
   <div class="hint" id="editWho"></div>
   <div class="warnbox" id="editFromCat" hidden>This one came from the <b>reference
@@ -573,8 +624,8 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 
 <div class="sheet-bg" id="addSheet"><div class="sheet">
   <h2>Add an item</h2>
-  <div class="fld"><label>What is it?</label><input id="addName" placeholder="e.g. paper towels" autocomplete="off"></div>
-  <div class="fld"><label>Note (size, price, why)</label><input id="addNote" placeholder="optional" autocomplete="off"></div>
+  <div class="fld"><label>What is it?</label><input id="addName" placeholder="e.g. paper towels" autocomplete="off" maxlength="120"></div>
+  <div class="fld"><label>Note (size, price, why)</label><input id="addNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
   <div class="fld"><label>Which store?</label><div class="seg" id="addStore"></div></div>
   <div class="row"><button data-close="addSheet">Cancel</button><button class="primary" id="saveAdd">Add</button></div>
 </div></div>
@@ -582,7 +633,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 <div class="sheet-bg" id="noteSheet"><div class="sheet">
   <h2 id="noteTitle">Swapped for…</h2>
   <div class="fld"><label id="noteLabel">What did you actually buy?</label>
-    <textarea id="noteText" rows="3"></textarea></div>
+    <textarea id="noteText" rows="3" maxlength="300"></textarea></div>
   <div class="fld" id="flagWrap">
     <label class="check"><input type="checkbox" id="flagBox">
       <span id="flagLabelText">This store never stocks this</span></label>

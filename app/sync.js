@@ -238,13 +238,47 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
     }, WRITE_TIMEOUT);
   }
 
+  /**
+   * Statuses that mean "the server read THIS body and refused it", so the other
+   * collections are unaffected and still go.
+   *
+   * Deliberately NOT every 4xx. `429` means *back off*, and answering a rate
+   * limit by immediately firing the remaining four kinds is the opposite of
+   * what it asks for; `408` is a timeout wearing a status code. `403` is left
+   * out too, because §0's warehouse wifi is exactly where a captive portal or a
+   * corporate proxy serves a 403 that Firebase never saw — and a global refusal
+   * misread as per-body turns one failed request into five. RTDB's real
+   * per-record refusals are 400 (validation), 401 (rules) and 413 (too large).
+   * Anything else — a timeout, a dropped socket, a 5xx — is the transport, and
+   * on a dead link every remaining kind fails the same way.
+   */
+  const BODY_REJECTED = new Set([400, 401, 413]);
+
+  function isBodyRejection(err) {
+    const m = err && err.message ? String(err.message) : '';
+    if (!m.startsWith('HTTP ')) return false;
+    return BODY_REJECTED.has(Number(m.slice(5)));
+  }
+
   let getOps = () => [];
   let ack = () => {};
   function bindOutbox(get, acknowledge) { getOps = get; ack = acknowledge; }
 
+  /**
+   * The WRITE path's own backoff counter. It deliberately does not share the
+   * stream's `attempt`: that one is pinned back to 0 fifteen seconds after the
+   * stream proves durable, and nothing on the write path ever raised it — so a
+   * write that fails every single time retried at `random() * 1000`, averaging
+   * half a second, for the whole trip, with no escalation. §4 requires backoff
+   * to escalate on the failure mode that actually happens, and now that a
+   * permanently-refused collection is a SUPPORTED state (see `drain`), that
+   * failure mode is a designed one rather than a coincidence.
+   */
+  let writeAttempt = 0;
+
   function scheduleWriteRetry() {
     if (stopped || writeRetryTimer) return;
-    const ceiling = Math.min(RECONNECT_MAX, RECONNECT_MIN * 2 ** attempt);
+    const ceiling = Math.min(RECONNECT_MAX, RECONNECT_MIN * 2 ** writeAttempt);
     writeRetryTimer = setTimeout(() => { writeRetryTimer = null; drain(); }, Math.random() * ceiling);
   }
 
@@ -258,26 +292,62 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
       if (!ops.length) return;
 
       const byKind = {};
-      for (const k of KINDS) byKind[k] = {};
+      const opsByKind = {};
+      for (const k of KINDS) { byKind[k] = {}; opsByKind[k] = []; }
       const encoded = await Promise.all(ops.map((op) => codec.encode(op.rec, slotFor(op.kind, op.id))));
       for (let i = 0; i < ops.length; i++) {
         const op = ops[i];
-        if (byKind[op.kind]) byKind[op.kind][op.id] = encoded[i];
+        if (byKind[op.kind]) { byKind[op.kind][op.id] = encoded[i]; opsByKind[op.kind].push(op); }
       }
 
+      // Ack each collection AS IT LANDS, never all of them at the end.
+      //
+      // Receipt: `ack(ops)` sat after this loop, so one refused collection left
+      // the outbox still holding the ops for every collection that HAD been
+      // written. Nothing ever cleared them, so the whole list was re-encrypted
+      // and re-sent on every retry, for the rest of the trip — the same
+      // cellular-burn shape as the ~800-reconnect receipt in §0. It was dormant
+      // only because every kind here has a rules node; the first kind added
+      // without one detonates it.
+      let failed = null;
       for (const kind of KINDS) {
         const body = byKind[kind];
         if (!Object.keys(body).length) continue;
-        await patch(kind, body);
+        try {
+          await patch(kind, body);
+        } catch (err) {
+          failed = err;
+          // A 4xx means the server read THIS body and refused it — a rules node
+          // that was never deployed, or a record the rules reject. The other
+          // collections are unaffected, so they still go. Anything else is the
+          // transport, and on a dead link every remaining kind fails the same
+          // way: stop asking rather than burn five more 12s timeouts in a
+          // warehouse. Either way the ops stay queued and the badge says so —
+          // a refused write is never silently dropped.
+          if (isBodyRejection(err)) continue;
+          break;
+        }
+        ack(opsByKind[kind]);
       }
-      ack(ops);
+      if (failed) throw failed;
+      writeAttempt = 0;
       setStatus(Status.LIVE);
-    } catch {
+    } catch (err) {
       // Ops stay in the outbox. Retry on our OWN timer — a failed write must
       // never tear down a healthy read stream. Reads routinely survive
       // conditions that stall a fresh request, and rebuilding the stream costs
       // a full root snapshot and a full decrypt pass.
-      setStatus(navigator.onLine === false ? Status.OFFLINE : Status.ERROR);
+      //
+      // `reason: 'rules'` matters: the badge reads `Retrying` for anything else,
+      // and SETUP.md tells the household in those words that `Blocked` means the
+      // database rules are rejecting writes. Without this, the one failure this
+      // function was rewritten to survive sent them to the wrong page of their
+      // own runbook.
+      writeAttempt = Math.min(writeAttempt + 1, 5);
+      setStatus(
+        navigator.onLine === false ? Status.OFFLINE : Status.ERROR,
+        isBodyRejection(err) ? { reason: 'rules' } : undefined,
+      );
       scheduleWriteRetry();
     } finally {
       draining = false;
