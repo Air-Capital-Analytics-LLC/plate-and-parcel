@@ -40,8 +40,55 @@ export const TEXT_SIZES = ['Normal', 'Large', 'Largest'];
  * whole point: merge resolves per RECORD, so if "planned for this trip" or
  * "this store never stocks it" lived on the item record alongside the tick,
  * clearing a tick would silently clobber a flag another shopper had just set.
+ *
+ * THE ORDER IS THE DRAIN PRIORITY ORDER, and `items` stays first. `drain()`
+ * walks this array and STOPS at the first transport failure, so on a flapping
+ * link only the first non-empty kind gets attempted per retry. A tick is the
+ * write that most needs to survive aisle 7, so it goes first. That is currently
+ * true by luck — prepending a kind, or slotting `price` in ahead of `items`,
+ * would silently demote every tick on exactly the link where one body per retry
+ * is all you get.
+ *
+ * `ui`, `me` and `outbox` are reserved names in the persisted blob: `load()`
+ * and `snapshot()` both iterate this array against that same object.
  */
 export const KINDS = ['items', 'added', 'plan', 'flags', 'qty'];
+
+/**
+ * The outbox key. `kind:id`, never a bare id — see LEDGER M15.
+ *
+ * Receipt: the outbox was one map keyed by item id, so `items`, `plan` and
+ * `qty` shared a key space and the second write to a row silently untracked the
+ * first. No race was needed. Tick a row, then change its quantity, while
+ * offline — `drain()` returns early when the browser reports no connection, so
+ * nothing clears in between — and the TICK NEVER LEAVES THE PHONE, while your
+ * own screen shows it done. §1's "a tap that appears to work and does not", in
+ * §0's dominant failure mode, with no recovery: `requeueAll` re-arms only
+ * `items` and `added`, and `restampPending` iterates the outbox, so neither can
+ * see a record the outbox has stopped pointing at.
+ *
+ * The VALUE stays the kind, and that is load-bearing for one reason only: it is
+ * the migration's sole source of truth for re-keying a pre-M15 bare id. (An
+ * earlier draft of this comment claimed the value is what lets an id contain a
+ * colon. That is wrong and was worth correcting: no KIND contains a colon, so
+ * splitting on the FIRST colon would be equally exact. `obId` slices a known
+ * length because it is handed the kind anyway, not because it has to be.)
+ *
+ * `obKey` is injective — no two (kind, id) pairs can collide — BUT that is a
+ * property of the current KINDS values, not of the scheme: no kind is a prefix
+ * of another. Adding `price` is safe. Adding a kind such that some existing
+ * kind + ':' could prefix it would not be. Check that before adding one.
+ */
+const obKey = (kind, id) => `${kind}:${id}`;
+const obId = (key, kind) => key.slice(kind.length + 1);
+
+/**
+ * What a client id may be. Named, and shared by `isWellFormed`'s `c` check and
+ * `load()`'s `me.id` gate, so the two can never drift — `me.id` BECOMES the `c`
+ * on every record this device writes, and a device whose own id fails this test
+ * has its every write discarded by everyone including itself.
+ */
+const CLIENT_ID = /^[A-Za-z0-9_-]{1,24}$/;
 
 /** A `t` further ahead than this is not a clock, it is a poisoning attempt. */
 const MAX_SKEW_MS = 24 * 60 * 60 * 1000;
@@ -88,7 +135,7 @@ export function isWellFormed(rec, kind) {
   if (!isStr(rec.c)) return false;
   // A client id is an opaque local token. Bounding it stops an insider picking
   // a high-sorting value and winning every LWW tie forever.
-  if (rec.c !== undefined && rec.c !== null && !/^[A-Za-z0-9_-]{1,24}$/.test(rec.c)) return false;
+  if (rec.c !== undefined && rec.c !== null && !CLIENT_ID.test(rec.c)) return false;
   if (kind === 'items') {
     if (!(rec.s === null || rec.s === undefined || STATUSES.includes(rec.s))) return false;
     if (!isStr(rec.n) || !isStr(rec.by)) return false;
@@ -100,10 +147,21 @@ export function isWellFormed(rec, kind) {
   } else if (kind === 'qty') {
     if (typeof rec.q !== 'number' || !Number.isInteger(rec.q)) return false;
     if (rec.q < MIN_QTY || rec.q > MAX_QTY) return false;
-  } else {
+  } else if (kind === 'added') {
     if (typeof rec.name !== 'string') return false;
     if (!isStr(rec.note) || !isStr(rec.store) || !isStr(rec.by)) return false;
     if (rec.del !== undefined && typeof rec.del !== 'boolean') return false;
+  } else {
+    // An UNKNOWN kind fails, totally and obviously, rather than falling through
+    // to whatever the last branch happened to check. This used to be a bare
+    // `else` holding the `added` shape, which meant a kind added to KINDS but
+    // not here was silently validated against `added`: every one of its records
+    // would be rejected for having no `name` — working in memory, gone on
+    // reload, never arriving from a peer, with nothing on screen. And in the
+    // other direction a record that happened to carry a `name` string would
+    // pass this gate without one of its own fields being looked at. This is the
+    // untrusted-input boundary (§4); it does not get to guess.
+    return false;
   }
   return true;
 }
@@ -122,37 +180,66 @@ export function createStore({ ns = 'household' } = {}) {
     plan:  Object.create(null),   // itemId -> {p, t, c}        on this trip?
     qty:   Object.create(null),   // itemId -> {q, t, c}        how many (1 = unset)
     flags: Object.create(null),   // "<itemId>@<store>" -> {f, by, t, c}  not stocked here
-    outbox: Object.create(null),  // id -> kind                 durable dirty set
+    outbox: Object.create(null),  // "<kind>:<id>" -> kind      durable dirty set
     ui: { store: 'sams', hideDone: false, text: 0 },
     me: { id: '', name: '' },
   };
+  // KINDS is the AUTHORITY, not merely the driver. `load()`, `snapshot()`,
+  // `prune()` and `mergeRemote()` all iterate it now, so a kind listed there
+  // with no map here makes `load()` throw on the first persisted record of it —
+  // INSIDE the try whose catch is "corrupt: start clean rather than crash".
+  // That discards the whole blob, the outbox with it: every pending offline
+  // write on the phone, gone, behind a Live badge. Before those loops were
+  // KINDS-driven the same slip cost only "that kind does not load"; the refactor
+  // made it catastrophic, so it has to carry its own backstop. The literal above
+  // stays because its comments document each record's shape.
+  for (const k of KINDS) if (!state[k]) state[k] = Object.create(null);
 
   /* ---- persistence ---- */
 
   function load() {
     let raw = null;
+    let migrated = false;
     try { raw = localStorage.getItem(LS_KEY); } catch { /* private mode */ }
     if (raw) {
       try {
         const o = JSON.parse(raw);
         // Locally persisted records went through the same gate on the way in,
         // but a previous version's data (or a hand-edited store) has not.
-        for (const [id, rec] of Object.entries(o.items || {})) {
-          if (isWellFormed(rec, 'items')) state.items[id] = rec;
+        // Driven by KINDS rather than five hand-written loops. The old version
+        // named each collection twice — here and in `snapshot()` — so adding a
+        // sixth kind and forgetting one of them would mean records that never
+        // persist: invisible while online, total loss offline, which is §0's
+        // dominant failure mode. The price KIND is the next one along.
+        for (const kind of KINDS) {
+          for (const [id, rec] of Object.entries(o[kind] || {})) {
+            if (isWellFormed(rec, kind)) state[kind][id] = rec;
+          }
         }
-        for (const [id, rec] of Object.entries(o.added || {})) {
-          if (isWellFormed(rec, 'added')) state.added[id] = rec;
+        // MIGRATION, and the first gate this map has ever had. Entries written
+        // before M15 are keyed by bare id; the value has always been the kind,
+        // so it carries everything needed to re-key them. Dropping them instead
+        // would lose exactly the pending writes this change exists to protect.
+        // A value that is not a known kind is discarded — `o.outbox` is parsed
+        // from localStorage and was previously copied in wholesale, which is
+        // also how a persisted value of `constructor` could wedge the whole
+        // write path: `sync.js` built its per-kind buckets as plain objects, so
+        // such a value made the bucket truthy and `.push` throw on every drain,
+        // forever, badge stuck on Retrying with taps piling up behind it.
+        //
+        // The `startsWith` below IS a colon-based structural test, unlike
+        // `obId`. It is only unambiguous because a locally-generated id cannot
+        // contain a colon — `slug()` collapses everything but `[a-z0-9]` to `-`,
+        // ad-hoc ids are base36, and a flag key is `<id>@<store>` over a
+        // whitelisted store — and because a record planted at a chosen remote id
+        // cannot decrypt: the AES-GCM AAD binds each seal to `list/kind/id`, so
+        // a forged record at `items:whatever` is dropped before it is ever seen.
+        // Neither of those facts is local to this line, hence this note.
+        for (const [k, kind] of Object.entries(o.outbox || {})) {
+          if (typeof kind !== 'string' || !KINDS.includes(kind)) continue;
+          if (!k.startsWith(`${kind}:`)) migrated = true;
+          state.outbox[k.startsWith(`${kind}:`) ? k : obKey(kind, k)] = kind;
         }
-        for (const [id, rec] of Object.entries(o.plan || {})) {
-          if (isWellFormed(rec, 'plan')) state.plan[id] = rec;
-        }
-        for (const [id, rec] of Object.entries(o.qty || {})) {
-          if (isWellFormed(rec, 'qty')) state.qty[id] = rec;
-        }
-        for (const [id, rec] of Object.entries(o.flags || {})) {
-          if (isWellFormed(rec, 'flags')) state.flags[id] = rec;
-        }
-        Object.assign(state.outbox, o.outbox || {});
         Object.assign(state.ui, o.ui || {});
         // A corrupt ui.store used to reach buildGroups and throw on every paint.
         if (!['sams', 'costco', 'custom'].includes(state.ui.store)) state.ui.store = 'sams';
@@ -170,10 +257,37 @@ export function createStore({ ns = 'household' } = {}) {
         Object.assign(state.me, o.me || {});
       } catch { /* corrupt: start clean rather than crash */ }
     }
-    if (!state.me.id) state.me.id = 'c' + Math.random().toString(36).slice(2, 10);
+    // `me.id` gets the SAME gate every record's `c` field gets, because it
+    // becomes that field. `stamp()` writes it into everything this device
+    // creates, and `isWellFormed` hard-rejects a `c` that fails CLIENT_ID.
+    // A persisted id that does not match — corrupt, hand-edited, half-migrated —
+    // therefore makes every write this phone produces silently discarded by the
+    // whole family, while its own badge reads Live and its own screen shows the
+    // ticks; then on the next boot `load()`'s own gate rejects its own records
+    // and the list blanks on the phone that made it. It was the last field here
+    // with no gate, and the one with the worst consequence.
+    if (!CLIENT_ID.test(state.me.id || '')) {
+      state.me.id = 'c' + Math.random().toString(36).slice(2, 10);
+    }
     if (typeof state.me.name !== 'string') state.me.name = '';
     prune();
     for (const k of KINDS) for (const r of Object.values(state[k])) observeClock(r.t || 0);
+    // ONE-SHOT RECOVERY, on the upgrade boot only.
+    //
+    // The migration above re-keys what the old outbox still POINTED AT. It
+    // cannot recover what the M15 bug had already untracked — and that is the
+    // entire population this fix exists for. A pre-v25 store holding
+    // `{"protein--chicken": "qty"}` also holds a dirty `items` record for that
+    // row that nothing points at, and re-keying does not start pointing at it.
+    // Every phone in the family is likely carrying some right now, and without
+    // this they only ever sync if somebody happens to touch that row again.
+    //
+    // Safe because merge is idempotent: these go out with their EXISTING `t`
+    // and `c`, so a peer already holding them rejects them in `wins()` and
+    // nothing cascades. That safety depends on `restampPending` leaving
+    // peer-authored records alone — see the `c !== state.me.id` guard there.
+    // This costs one full upload per device, once, ever.
+    if (migrated) requeueAll();
   }
 
   /**
@@ -198,21 +312,23 @@ export function createStore({ ns = 'household' } = {}) {
       // so they can be kept forever.
       if (r && r.del && !r.cat && (r.t || 0) < cutoff) {
         delete state.added[id];
-        delete state.outbox[id];
+        delete state.outbox[obKey('added', id)];
       }
     }
-    for (const id of Object.keys(state.outbox)) {
-      const map = state[state.outbox[id]];
-      if (!map || !map[id]) delete state.outbox[id];
+    for (const key of Object.keys(state.outbox)) {
+      const kind = state.outbox[key];
+      const map = state[kind];
+      if (!map || !map[obId(key, kind)]) delete state.outbox[key];
     }
   }
 
   function snapshot() {
-    return JSON.stringify({
-      items: state.items, added: state.added, plan: state.plan,
-      flags: state.flags, qty: state.qty,
-      outbox: state.outbox, ui: state.ui, me: state.me,
-    });
+    // KINDS-driven, for the same reason `load()` is: these two named the five
+    // collections independently, and a sixth added to one and missed in the
+    // other persists nothing.
+    const out = { outbox: state.outbox, ui: state.ui, me: state.me };
+    for (const kind of KINDS) out[kind] = state[kind];
+    return JSON.stringify(out);
   }
 
   function writeThrough() {
@@ -279,7 +395,7 @@ export function createStore({ ns = 'household' } = {}) {
       by: status ? state.me.name : '',
     });
     state.items[itemId] = rec;
-    state.outbox[itemId] = 'items';
+    state.outbox[obKey('items', itemId)] = 'items';
     persist();
     emit({ type: 'item', id: itemId });
     return rec;
@@ -291,7 +407,7 @@ export function createStore({ ns = 'household' } = {}) {
       name: String(name), note: String(note || ''), store: String(store),
       del: false, by: state.me.name,
     });
-    state.outbox[id] = 'added';
+    state.outbox[obKey('added', id)] = 'added';
     persist();
     emit({ type: 'added' });
     return id;
@@ -338,7 +454,7 @@ export function createStore({ ns = 'household' } = {}) {
       by: cur?.by || state.me.name,
       ...(patch.cat ? { cat: 1 } : {}),
     });
-    state.outbox[id] = 'added';
+    state.outbox[obKey('added', id)] = 'added';
     persist();
     emit({ type: 'added' });
     return true;
@@ -365,7 +481,7 @@ export function createStore({ ns = 'household' } = {}) {
       const r = state.added[id];
       if (!r || !r.cat || !r.del) continue;
       state.added[id] = stamp({ ...r, del: false });
-      state.outbox[id] = 'added';
+      state.outbox[obKey('added', id)] = 'added';
       n++;
     }
     if (n) { persist(); emit({ type: 'added' }); }
@@ -393,7 +509,7 @@ export function createStore({ ns = 'household' } = {}) {
       del: true,
       ...(opts.cat || cur?.cat ? { cat: 1 } : {}),
     });
-    state.outbox[id] = 'added';
+    state.outbox[obKey('added', id)] = 'added';
     persist();
     emit({ type: 'added' });
   }
@@ -413,7 +529,7 @@ export function createStore({ ns = 'household' } = {}) {
 
   function setPlanned(itemId, on) {
     state.plan[itemId] = stamp({ p: !!on });
-    state.outbox[itemId] = 'plan';
+    state.outbox[obKey('plan', itemId)] = 'plan';
     persist();
     emit({ type: 'plan', id: itemId });
   }
@@ -422,7 +538,7 @@ export function createStore({ ns = 'household' } = {}) {
     for (const id of Object.keys(state.plan)) {
       if (!state.plan[id]?.p) continue;
       state.plan[id] = stamp({ p: false });
-      state.outbox[id] = 'plan';
+      state.outbox[obKey('plan', id)] = 'plan';
     }
     persist();
     emit({ type: 'bulk' });
@@ -445,7 +561,7 @@ export function createStore({ ns = 'household' } = {}) {
     const q = Math.max(MIN_QTY, Math.min(MAX_QTY, Math.round(Number(n) || MIN_QTY)));
     if (q === getQty(itemId)) return q;
     state.qty[itemId] = stamp({ q });
-    state.outbox[itemId] = 'qty';
+    state.outbox[obKey('qty', itemId)] = 'qty';
     persist();
     emit({ type: 'qty', id: itemId });
     return q;
@@ -468,7 +584,7 @@ export function createStore({ ns = 'household' } = {}) {
   function setFlag(itemId, storeId, on) {
     const k = flagKey(itemId, storeId);
     state.flags[k] = stamp({ f: !!on, by: on ? state.me.name : '' });
-    state.outbox[k] = 'flags';
+    state.outbox[obKey('flags', k)] = 'flags';
     persist();
     emit({ type: 'flags', id: k });
   }
@@ -477,7 +593,7 @@ export function createStore({ ns = 'household' } = {}) {
     for (const id of Object.keys(state.items)) {
       if (!state.items[id] || state.items[id].s == null) continue;
       state.items[id] = stamp({ s: null, n: '', by: '' });
-      state.outbox[id] = 'items';
+      state.outbox[obKey('items', id)] = 'items';
     }
     prune();
     persist();
@@ -501,12 +617,12 @@ export function createStore({ ns = 'household' } = {}) {
       const want = keep.includes(id);
       if (!!state.plan[id]?.p === want) continue;
       state.plan[id] = stamp({ p: want });
-      state.outbox[id] = 'plan';
+      state.outbox[obKey('plan', id)] = 'plan';
     }
     for (const id of keep) {
       if (state.plan[id]?.p) continue;
       state.plan[id] = stamp({ p: true });
-      state.outbox[id] = 'plan';
+      state.outbox[obKey('plan', id)] = 'plan';
     }
     return keep.length;
   }
@@ -556,7 +672,12 @@ export function createStore({ ns = 'household' } = {}) {
    */
   function mergeRemote(remote) {
     let changed = false;
-    const clobbered = [];
+    // A SET, because the same id can now lose once per kind. Ticking a row and
+    // bumping its quantity offline leaves two pending writes — that is the M15
+    // fix working — so one remote row beating both would have told the user
+    // "2 of your ticks were changed on another phone" about one item and one
+    // other person's single action.
+    const clobbered = new Set();
 
     for (const kind of KINDS) {
       const incoming = remote[kind];
@@ -568,23 +689,31 @@ export function createStore({ ns = 'household' } = {}) {
         observeClock(rec.t);
         const cur = into[id];
         if (!wins(rec, cur)) continue;
-        if (cur && cur.c === state.me.id && state.outbox[id]) clobbered.push(id);
+        // Scoped to THIS kind. Against the old shared key space this asked
+        // "is anything pending for this id", so an incoming `qty` could report
+        // a clobbered `items` write, or miss a genuinely clobbered one because
+        // a different kind's entry had overwritten the key.
+        if (cur && cur.c === state.me.id && state.outbox[obKey(kind, id)]) clobbered.add(id);
         into[id] = rec;
         changed = true;
       }
     }
     if (changed) { persist(); emit({ type: 'remote' }); }
-    return { changed, clobbered };
+    return { changed, clobbered: [...clobbered] };
   }
 
   /* ---- outbox ---- */
 
   function pendingOps() {
     const ops = [];
-    for (const id of Object.keys(state.outbox)) {
-      const kind = state.outbox[id];
+    for (const key of Object.keys(state.outbox)) {
+      const kind = state.outbox[key];
+      const id = obId(key, kind);
       const rec = state[kind] && state[kind][id];
-      if (rec) ops.push({ id, kind, rec });
+      // The op carries the KEY it came from, so `ackOps` deletes the entry it
+      // was handed rather than rebuilding one. Recomposing was only sound while
+      // every key's prefix matched its value, and nothing enforces that.
+      if (rec) ops.push({ key, id, kind, rec });
     }
     return ops;
   }
@@ -599,7 +728,7 @@ export function createStore({ ns = 'household' } = {}) {
     for (const op of ops) {
       const live = state[op.kind] && state[op.kind][op.id];
       if (live && live.t === op.rec.t && live.c === op.rec.c) {
-        delete state.outbox[op.id];
+        delete state.outbox[op.key || obKey(op.kind, op.id)];
         cleared++;
       }
     }
@@ -607,7 +736,28 @@ export function createStore({ ns = 'household' } = {}) {
     return cleared;
   }
 
-  function pendingCount() { return Object.keys(state.outbox).length; }
+  /**
+   * How many THINGS are waiting, not how many records.
+   *
+   * This is the number on the badge (`↑ 12`), read by somebody in an aisle with
+   * no signal, and there is no legend anywhere explaining it. Counting outbox
+   * entries made it 2-3x higher for identical activity the moment one row could
+   * hold a tick AND a quantity AND a plan entry: plan 30 rows, tick them, bump
+   * 8 quantities and it read `Offline ↑68`. The old `↑ 30` was only "right"
+   * because it was silently dropping the other 38 writes.
+   *
+   * The two reviews split on this. Correctness called the raw count truthful —
+   * it is, as a count of pending WRITES. The performance pass called it a
+   * §8 failure, and that argument wins: the number exists for a person deciding
+   * whether their taps are safe, and "things of mine still to send" is what
+   * they can check against their own screen. An internal record count they
+   * cannot reconcile with anything is a number that sends them back to paper.
+   */
+  function pendingCount() {
+    const rows = new Set();
+    for (const key of Object.keys(state.outbox)) rows.add(obId(key, state.outbox[key]));
+    return rows.size;
+  }
 
   /**
    * Re-stamp queued work so it is ordered after everything that happened during
@@ -623,12 +773,31 @@ export function createStore({ ns = 'household' } = {}) {
    * the items it touched. For "did I put this in the trolley", the more recent
    * real-world action should win, and `mergeRemote` reports any of our pending
    * writes that lose so the user is told rather than surprised.
+   *
+   * That trade is FIVE KINDS WIDE now, not two. It was written when the outbox
+   * effectively held one entry per row, so it bulldozed the last thing you did
+   * to a row; it now covers that row's tick, its plan entry, its quantity and
+   * its not-stocked flags together. That is the intended behaviour — they are
+   * all "what this phone last knew" — but it is five times more than the
+   * sentence above used to describe.
    */
   function restampPending() {
     let n = 0;
-    for (const id of Object.keys(state.outbox)) {
-      const map = state[state.outbox[id]];
+    for (const key of Object.keys(state.outbox)) {
+      const kind = state.outbox[key];
+      const map = state[kind];
+      const id = obId(key, kind);
       if (!map || !map[id]) continue;
+      // OUR OWN WORK ONLY. After `requeueAll` the outbox is the entire local
+      // store, including records the other three phones wrote — and re-stamping
+      // those would make this device the author of record for the whole list,
+      // timestamped ahead of every peer, bulldozing anything they did in the
+      // last few seconds and winning every future LWW tie. §4 calls the
+      // empty-snapshot restore "safe because merge is idempotent", and that is
+      // only true while the re-armed records go back out UNCHANGED. This `if`
+      // is what makes that sentence true again. The slow-clock problem below
+      // only ever concerned work this device did itself.
+      if (map[id].c !== state.me.id) continue;
       map[id] = { ...map[id], t: tick(), c: state.me.id };
       n++;
     }
@@ -646,13 +815,46 @@ export function createStore({ ns = 'household' } = {}) {
    * resurrect for anyone who joined fresh afterwards, while the phones that
    * did the restoring showed something different. LWW makes the unconditional
    * version safe — a peer holding newer data keeps it.
+   *
+   * ALL FIVE KINDS, not two. This listed `items` and `added` by hand and left
+   * `plan`, `qty` and `flags` behind, which broke §4's "an empty root snapshot
+   * while holding local state means loss, not a fresh list" in the quietest
+   * possible way: the node is emptied, every phone re-uploads its ticks and its
+   * ad-hoc items, the toast says "Restoring 58 from this phone", and the trip
+   * plan, every quantity and every not-stocked flag are gone from the shared
+   * list forever. Nobody sees it, because each phone still renders its own
+   * local copy — until one loses its storage (iOS evicts a PWA's localStorage
+   * after 7 days; `writeThrough` already has a handler for exactly that) or a
+   * fresh device opens the link, at which point the plan is simply missing with
+   * no event to explain it. The argument above for re-arming unconditionally
+   * covers all five kinds unchanged.
    */
   function requeueAll() {
-    let n = 0;
-    for (const id of Object.keys(state.items)) { if (state.items[id]) { state.outbox[id] = 'items'; n++; } }
-    for (const id of Object.keys(state.added)) { if (state.added[id]) { state.outbox[id] = 'added'; n++; } }
-    if (n) { persist(); emit({ type: 'sync' }); }
-    return n;
+    // Counts NEWLY-ARMED ROWS, not records, and both halves of that matter.
+    //
+    // "Newly armed": root emptiness is judged on `items` and `added` only (see
+    // sync.js), so a brand-new list where the family has planned a trip but
+    // nobody has ticked anything yet looks empty on every reconnect. While this
+    // counted `items` + `added` the count was 0 there and nothing happened;
+    // counting all five would have made a flapping link re-upload the whole
+    // store and toast at the user over and over, during the two non-technical
+    // users' first hour with the app.
+    //
+    // "Rows": the caller puts this number in front of a person — "Restoring 12
+    // from this phone" — and one row can contribute five records. Same unit as
+    // `pendingCount`, so the toast and the badge can never disagree.
+    const rows = new Set();
+    for (const kind of KINDS) {
+      for (const id of Object.keys(state[kind])) {
+        if (!state[kind][id]) continue;
+        const key = obKey(kind, id);
+        if (state.outbox[key] === kind) continue;   // already queued
+        state.outbox[key] = kind;
+        rows.add(id);
+      }
+    }
+    if (rows.size) { persist(); emit({ type: 'sync' }); }
+    return rows.size;
   }
 
   function reset() {

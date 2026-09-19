@@ -1457,10 +1457,14 @@ async function boot() {
       // Saying nothing means a tick disappears in front of the person who made
       // it, with no explanation, which is the failure they cannot diagnose.
       if (meta && meta.first) pendingRestamp = true;
+      // "changes", not "ticks". A clobber is now reported accurately per kind,
+      // so this fires for a quantity or a plan entry somebody else changed just
+      // as often as for a tick — and being told to go and check your ticks when
+      // your ticks are fine is worse than being told nothing.
       if (clobbered.length) {
         toast(clobbered.length === 1
-          ? 'One of your ticks was changed on another phone'
-          : `${clobbered.length} of your ticks were changed on another phone`);
+          ? 'Someone else changed one of the things you just updated'
+          : `Someone else changed ${clobbered.length} of the things you just updated`);
       }
     },
     onBeforeDrain: () => {

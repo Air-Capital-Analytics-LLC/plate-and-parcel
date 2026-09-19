@@ -291,8 +291,14 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
       const ops = getOps();
       if (!ops.length) return;
 
-      const byKind = {};
-      const opsByKind = {};
+      // Null-prototype, so an op whose `kind` is `constructor` or `__proto__`
+      // finds no inherited truthy bucket to slip through the guard below. The
+      // store gates outbox values against KINDS now, which closes this at
+      // source; this is the second lock, on the path §0 cares most about,
+      // because the failure mode is the whole write path wedged forever behind
+      // a Retrying badge.
+      const byKind = Object.create(null);
+      const opsByKind = Object.create(null);
       for (const k of KINDS) { byKind[k] = {}; opsByKind[k] = []; }
       const encoded = await Promise.all(ops.map((op) => codec.encode(op.rec, slotFor(op.kind, op.id))));
       for (let i = 0; i < ops.length; i++) {
