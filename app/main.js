@@ -5,6 +5,7 @@
 
 import { CONFIG } from '../config.js';
 import { createStore, TEXT_SIZES } from './store.js';
+import * as Store from './store.js';
 import { createSync, Status } from './sync.js';
 import * as View from './view.js';
 import * as Crypto from './crypto.js';
@@ -277,7 +278,15 @@ function repaint() {
   const c = View.counts(s, s.ui.store);
   const pct = c.total ? Math.round((c.done / c.total) * 100) : 0;
   $('pfill').style.width = pct + '%';
-  const storeLabel = (View.STORES.find((x) => x.id === s.ui.store) || View.STORES[0]).label;
+  // Resolved once: this runs on every paint, and the fallback needs the same
+  // list the lookup used or a switched-off shop could name a different one.
+  const shops = View.shopsFor(s);
+  // Reset BEFORE anything is computed from `ui.store`. Doing it lower down
+  // painted one frame of the new store's rows under the old store's progress
+  // count. `shopsFor` never returns empty, so `shops[0]` cannot throw and this
+  // cannot loop — the id it sets is by construction one of the ones it tested.
+  if (!shops.some((x) => x.id === s.ui.store)) store.setUI({ store: shops[0].id });
+  const storeLabel = (shops.find((x) => x.id === s.ui.store) || shops[0]).label;
   // Always name the list, the default one included. The header is a fixed
   // banner, so without this there is nothing on screen saying WHICH list you
   // are looking at - and the whole point of several lists is telling them
@@ -362,7 +371,7 @@ function openNote(itemId, st) {
   $('flagWrap').style.display = flaggable ? '' : 'none';
   $('flagBox').checked = flaggable && store.isFlagged(itemId, storeId);
   $('flagLabelText').textContent =
-    `${(View.STORES.find((x) => x.id === storeId) || {}).label || 'This store'} never stocks this`;
+    `They never have this at ${(View.shopsFor(store.state).find((x) => x.id === storeId) || {}).label || 'this store'}`;
 
   openSheet('noteSheet');
   setTimeout(() => ta.focus(), 120);
@@ -387,7 +396,7 @@ function openAdd() {
   addStore = store.state.ui.store;
   $('addName').value = '';
   $('addNote').value = '';
-  $('addStore').innerHTML = View.STORES
+  $('addStore').innerHTML = View.shopsFor(store.state)
     .map((s) => `<button data-addstore="${s.id}" class="${addStore === s.id ? 'on' : ''}">${View.esc(s.short)}</button>`)
     .join('');
   openSheet('addSheet');
@@ -417,7 +426,7 @@ function openEdit(id) {
   $('editDelete').textContent = editCat
     ? '\u232b Take off this list'
     : '\u232b Remove from the list';
-  $('editStore').innerHTML = View.STORES
+  $('editStore').innerHTML = View.shopsFor(store.state)
     .map((s) => `<button data-editstore="${s.id}" class="${editStore === s.id ? 'on' : ''}">${View.esc(s.short)}</button>`)
     .join('');
   $('editWho').textContent = (!editCat && a?.by) ? `Added by ${a.by}.` : '';
@@ -441,7 +450,7 @@ function saveEdit() {
   // Moving an item to another shop hides it from the tab you are looking at,
   // which reads as the edit having deleted it. Follow it across.
   if (moved && store.state.ui.store !== editStore) store.setUI({ store: editStore });
-  toast(moved ? 'Saved \u2014 moved to ' + (View.STORES.find((s) => s.id === editStore) || {}).short : 'Saved');
+  toast(moved ? 'Saved \u2014 moved to ' + (View.shopsFor(store.state).find((s) => s.id === editStore) || {}).short : 'Saved');
   sync?.drain();
 }
 
@@ -497,11 +506,79 @@ function openLists() {
   openSheet('listsSheet');
 }
 
+/* ---- which shops a new list will use ---- */
+
+/**
+ * The choice is made here but CANNOT be written here: a list does not exist on
+ * the server until somebody sets its passphrase, and there is no key to encrypt
+ * with until then. So it is parked under the new list's id and applied on that
+ * list's first unlock. Parked locally and unencrypted, which is fine — it is
+ * the names of some shops, on the device of the person who just typed them, and
+ * it is deleted the moment it is used.
+ */
+const NEWSHOPS_KEY = (id) => `pnp.newshops:${id}`;
+let newListPick = new Set(Store.LEGACY_SHOPS);
+
+function renderShopPick() {
+  $('newListShops').innerHTML = Store.SHOP_POOL.map((s) => {
+    const on = newListPick.has(s.id);
+    return `<button type="button" data-shoppick="${View.esc(s.id)}" class="pxl${on ? ' on' : ''}">`
+      + `${View.esc(s.short)}</button>`;
+  }).join('');
+  const n = newListPick.size;
+  $('newListShopHint').textContent = n === 0
+    ? 'Pick at least one store.'
+    : n < MAX_SHOPS
+      ? `${n} store${n === 1 ? '' : 's'} — one tab each.`
+      : `${MAX_SHOPS} stores — that is all that fits across the top.`;
+  $('newListCustomWrap').hidden = !newListPick.has('custom');
+}
+
+/**
+ * A cap on what you can PICK, not a guarantee about the strip.
+ *
+ * A store that still holds items keeps its tab whether or not it was chosen
+ * (see `shopsFor`), so the strip can exceed this — a phone on an older build
+ * filing items under the legacy three is the realistic way. That trade is
+ * deliberate: reachable beats tidy. What the cap prevents is somebody choosing
+ * eight stores on day one with no idea what a tab strip looks like.
+ *
+ * The tab strip is one row and does not scroll. Measured at 320px: three tabs
+ * give each face about eight characters, seven give about two — and at the
+ * Largest text setting, which exists for the two people this app is built
+ * around, seven gives under two. A warning that lets you do it anyway is an
+ * anxiety with no action, issued at the moment somebody has least idea what a
+ * tab strip even looks like, about a choice they cannot revisit.
+ *
+ * The refusal is spoken, not silent: a chip that does nothing when tapped is
+ * §1's "never silently do nothing". The tap lands, and the hint says why.
+ */
+const MAX_SHOPS = 4;
+
+function toggleShopPick(id) {
+  if (newListPick.has(id)) {
+    newListPick.delete(id);
+    renderShopPick();
+    return;
+  }
+  if (newListPick.size >= MAX_SHOPS) {
+    renderShopPick();
+    $('newListShopHint').textContent =
+      `${MAX_SHOPS} is the most that fits across the top. Turn one off to pick another.`;
+    return;
+  }
+  newListPick.add(id);
+  renderShopPick();
+}
+
 function openNewList() {
   closeSheet('listsSheet');
   $('newListName').value = '';
   $('newListErr').textContent = '';
   $('newListPreview').textContent = '';
+  newListPick = new Set(Store.LEGACY_SHOPS);
+  $('newListCustomName').value = '';
+  renderShopPick();
   openSheet('newListSheet');
   setTimeout(() => $('newListName').focus(), 150);
 }
@@ -517,6 +594,17 @@ function createList() {
   const id = slugifyName(label);
   if (!id) { $('newListErr').textContent = 'Give the list a name.'; return; }
   if (knownLists()[id]) { $('newListErr').textContent = 'You already have a list with that name.'; return; }
+  if (!newListPick.size) {
+    // Both slots: the hint sits up in the stores field and can be off-screen
+    // at the Largest text setting, and `newListErr` is the line directly
+    // above Create where the other two refusals already speak.
+    $('newListShopHint').textContent = 'Pick at least one store.';
+    $('newListErr').textContent = 'Pick at least one store.';
+    return;
+  }
+  // Park the shop choice for this list's first unlock to apply. See NEWSHOPS_KEY.
+  const customName = $('newListCustomName').value.trim().slice(0, Store.MAX_SHOP_LABEL);
+  writeLocal(NEWSHOPS_KEY(id), { ids: [...newListPick], customName });
   // Nothing is created server-side here. A list exists the moment someone opens
   // it and sets a passphrase, which is the same path the household list took.
   rememberList(id, label);
@@ -778,7 +866,7 @@ function openImport() {
 
 function previewImport() {
   importParsed = store.parseList($('importText').value);
-  const storeLabel = (View.STORES.find((x) => x.id === store.state.ui.store) || {}).short || '';
+  const storeLabel = (View.shopsFor(store.state).find((x) => x.id === store.state.ui.store) || {}).short || '';
   $('importPreview').textContent = importParsed.length
     ? `${importParsed.length} item${importParsed.length === 1 ? '' : 's'} → ${storeLabel}: ${importParsed.slice(0, 6).join(', ')}${importParsed.length > 6 ? '…' : ''}`
     : 'Nothing to add yet — paste a list above, one item per line.';
@@ -1198,6 +1286,19 @@ function wireEvents() {
     b.onclick = () => setTheme(b.dataset.themeSet);
   }
   $('newListGo').onclick = createList;
+  // Delegated: the chips are rebuilt on every toggle, so per-button handlers
+  // would be re-bound constantly and leak the stale ones.
+  // `?.` because this runs on the BOOT path, before the first paint, and the
+  // node is new in v27. LEDGER V8 records the graph that makes this fatal and
+  // says it was reproduced live: GitHub Pages hands back a cached older
+  // index.html alongside the fresh main.js, the lookup is null, `wireEvents`
+  // throws, `boot()` rejects unhandled — and the phone shows a header over an
+  // empty list with no passphrase box and nothing to tap. `passReveal` two
+  // hundred lines up already carries this guard for the same reason.
+  $('newListShops')?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-shoppick]');
+    if (b) toggleShopPick(b.getAttribute('data-shoppick'));
+  });
   $('listsNew').onclick = openNewList;
   $('listsShare').onclick = shareThisList;
   $('newListName').addEventListener('input', previewNewList);
@@ -1393,6 +1494,65 @@ function reportDroppedWork() {
   document.querySelector('.installbar')?.remove();
 }
 
+/**
+ * Write the shop choice that `createList` parked, on this list's first unlock.
+ *
+ * Guarded on the list having NO shop records yet, so it can only ever run once
+ * and can never overwrite a choice somebody else already made — two people
+ * opening the same new link at the same time is a real sequence, and the second
+ * one must not reset the first one's shops.
+ */
+/** Armed at unlock, fired once the server has answered. Before that the guard
+ *  inside would be reading an empty local store and could not see a choice or
+ *  content that already exists on the list. */
+let parkedPending = false;
+function runParkedShops() {
+  if (!parkedPending) return;
+  parkedPending = false;
+  applyParkedShops();
+  sync?.drain();
+}
+
+function applyParkedShops() {
+  const parked = readLocal(NEWSHOPS_KEY(LIST_ID), null);
+  if (!parked || !Array.isArray(parked.ids) || !parked.ids.length) return;
+
+  // NOT "has anybody chosen" — "has anybody USED this list". The old guard
+  // asked the first question and the difference loses work: create a list and
+  // pick its stores, send the link BEFORE opening it yourself (which is exactly
+  // what `NEW LIST.txt` tells people to do), and somebody else sets the
+  // passphrase and adds nine things — filed under the default store, because no
+  // choice has arrived. Then you open it, your parked pick applies, and their
+  // nine items are behind a store this list no longer uses. Nothing said a word.
+  const used = Object.keys(store.state.added).length || Object.keys(store.state.items).length;
+  if (Object.keys(store.state.shops).length || used) {
+    // Leave the park alone on a list that already has shops — it is spent. But
+    // do not silently eat it on a list that merely has content: the creator can
+    // still apply it deliberately once the editor exists.
+    if (Object.keys(store.state.shops).length) {
+      try { localStorage.removeItem(NEWSHOPS_KEY(LIST_ID)); } catch { /* ignore */ }
+      return;
+    }
+    // Skipped because the list was already in use. Say so — §1, never silently
+    // do nothing. Without this the creator's choice simply evaporated, and the
+    // comment consoling itself that "they can apply it once the editor exists"
+    // was describing an editor that does not exist yet.
+    toast('This list was already in use, so the stores you picked were not applied.');
+    return;
+  }
+
+  for (const id of parked.ids) {
+    store.setShop(id, {
+      on: true,
+      label: id === 'custom' ? String(parked.customName || '') : '',
+    });
+  }
+  // Cleared only once the write has actually happened. Removing it above the
+  // guard meant a choice could be consumed and discarded with no second chance.
+  try { localStorage.removeItem(NEWSHOPS_KEY(LIST_ID)); } catch { /* ignore */ }
+  render();
+}
+
 async function boot() {
   applyTextSize();
   applyTheme();
@@ -1481,7 +1641,7 @@ async function boot() {
   // The view is blind until here. Unblind it and paint immediately: nothing
   // else on the boot path is guaranteed to fire, so without this the screen
   // would sit on "Locked" until some unrelated event happened to repaint.
-  if (codec) { locked = false; render(); reportDroppedWork(); }
+  if (codec) { locked = false; render(); reportDroppedWork(); parkedPending = true; }
   if (!codec) {
     // Offline with nothing verifiable yet. The comment used to promise
     // local-only "until we reconnect" while nothing ever reconnected.
@@ -1503,6 +1663,7 @@ async function boot() {
       // Saying nothing means a tick disappears in front of the person who made
       // it, with no explanation, which is the failure they cannot diagnose.
       if (meta && meta.first) pendingRestamp = true;
+      if (meta && meta.first) runParkedShops();
       // "changes", not "ticks". A clobber is now reported accurately per kind,
       // so this fires for a quantity or a plan entry somebody else changed just
       // as often as for a tick — and being told to go and check your ticks when
@@ -1523,9 +1684,25 @@ async function boot() {
     },
     onStatus: (s, d) => { lastStatus = s; lastDetail = d; setSyncBadge(s, d); },
     onEmptySnapshot: () => {
-      // The shared list holds nothing but this device does. That is data loss,
-      // not a fresh start, so put our copy back. Harmless on a genuinely new
-      // list: we would simply be the first writer.
+      // A brand-new list's first snapshot is the EMPTY one, so this is the path
+      // the creator actually takes — hooking the park to `meta.first` alone
+      // would mean it never ran for the person who made the choice.
+      runParkedShops();
+      // "...WHILE HOLDING LOCAL STATE." §4 words the invariant that way and the
+      // second half is load-bearing: an empty server plus an empty phone is a
+      // new list, not a loss, and treating it as one made every brand-new list
+      // re-upload its store settings and announce "Restoring 3 from this phone"
+      // on every reconnect through its first hour — in front of the two users
+      // least able to read past it.
+      //
+      // `shops` is deliberately NOT counted as something to restore: a device
+      // that holds only configuration is the creator on a list nobody has used
+      // yet, which is the case this guard exists to stay quiet about. The test
+      // lives here rather than in `sync.js` because only this side knows what
+      // the device is holding.
+      const holds = ['items', 'added', 'plan', 'qty', 'flags']
+        .some((k) => Object.keys(store.state[k] || {}).length);
+      if (!holds) return;
       const n = store.requeueAll();
       if (n) { toast(`Restoring ${n} from this phone`); sync?.drain(); }
     },

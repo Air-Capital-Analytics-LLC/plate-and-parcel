@@ -74,6 +74,16 @@
   /* One colour per store, roughly the colour of the sign over the door, so the
      tab you want is findable without reading it. */
   --sams:#74c0fc; --costco:#ffb3b3; --custom:#63e6be;
+  /* The four stores added in v27. There are already eight meaningful colours in
+     this file (three statuses, three original stores, planning violet, brand
+     gold), so perfect separation of twelve is not available and pretending
+     otherwise would be the lie. These are the furthest-apart hues left, and the
+     honest position is that COLOUR IS THE SECOND CUE HERE, not the first: a tab
+     also carries its name, at most four are ever chosen at once, and no more
+     than a few can be on screen together. First drafts of this line put Target
+     within a hair of Costco's pink and Aldi on top of the brand gold. The
+     original three keep their values exactly: nobody's list gets recoloured. */
+  --target:#ffa94d; --walmart:#66d9e8; --aldi:#c0eb75; --dillons:#f783ac;
 
   /* Planning is a different ACTIVITY from shopping - deciding what to buy
      rather than buying it - so it gets its own colour rather than another
@@ -112,6 +122,7 @@ html[data-theme="light"]{
   --skip:#e03131; --on-skip:#ffffff;
 
   --sams:#1263ab; --costco:#a31f1f; --custom:#04543f;
+  --target:#b5480a; --walmart:#0b7285; --aldi:#5c7c1f; --dillons:#a61e4d;
 
   --plan:#7048e8; --plan-ink:#5f3dc4; --on-plan:#ffffff;
 
@@ -192,6 +203,18 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .sizebtn.set .aa{color:var(--accent-ink);}
 .badge{font-size:clamp(10px, .64rem, 12.5px); padding:4px 7px; border-radius:7px; background:var(--panel2); color:var(--muted); white-space:nowrap; flex-shrink:0;}
 .badge.ok{color:var(--badge-ok);} .badge.warn{color:var(--badge-warn);} .badge.bad{color:var(--badge-bad);}
+/* Shop chips in the new-list sheet. Wraps, because seven of them will not sit
+   in a row on a 320px phone - and unlike the tab strip this one is allowed to
+   take two lines: it is read once, standing still, not tapped mid-aisle. */
+.shoppick{display:flex; flex-wrap:wrap; gap:6px;}
+.shoppick button{padding:10px 12px; font-size:.82rem; font-weight:600;
+  color:var(--muted); --fill:var(--panel2);}
+.shoppick button.on{--fill:var(--accent); color:var(--on-accent); font-weight:700;}
+/* The tab strip stays ONE ROW and one tap. A name somebody typed can be longer
+   than the room available, so it truncates rather than wrapping the row into
+   two - the row's height is load-bearing for the sticky header. */
+.tab{min-width:0;}
+.tab .face{display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .tabs{display:flex; gap:6px;}
 .tab{flex:1; padding:11px 4px; font-size:.82rem; font-weight:600; text-align:center;
   --fill:var(--panel2); color:var(--muted); line-height:1.25;}
@@ -200,12 +223,20 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .tab[data-store="sams"]{color:var(--sams);}
 .tab[data-store="costco"]{color:var(--costco);}
 .tab[data-store="custom"]{color:var(--custom);}
+.tab[data-store="target"]{color:var(--target);}
+.tab[data-store="walmart"]{color:var(--walmart);}
+.tab[data-store="aldi"]{color:var(--aldi);}
+.tab[data-store="dillons"]{color:var(--dillons);}
 .tab.on{--fill:var(--panel); opacity:1; font-weight:700;}
 /* The selected tab's outline takes the shop's colour, which is the job the
    border used to do before clip-path made borders unusable here. */
 .tab.on[data-store="sams"]{--bevel-edge:var(--sams);}
 .tab.on[data-store="costco"]{--bevel-edge:var(--costco);}
 .tab.on[data-store="custom"]{--bevel-edge:var(--custom);}
+.tab.on[data-store="target"]{--bevel-edge:var(--target);}
+.tab.on[data-store="walmart"]{--bevel-edge:var(--walmart);}
+.tab.on[data-store="aldi"]{--bevel-edge:var(--aldi);}
+.tab.on[data-store="dillons"]{--bevel-edge:var(--dillons);}
 /* WHICH LIST AM I LOOKING AT. This lived at the left end of `.pmeta`, sharing a
    .72rem muted line with the store name, and it was not answering the question:
    somebody holding two lists could not tell them apart at a glance, which is
@@ -645,7 +676,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
     <textarea id="noteText" rows="3" maxlength="300"></textarea></div>
   <div class="fld" id="flagWrap">
     <label class="check"><input type="checkbox" id="flagBox">
-      <span id="flagLabelText">This store never stocks this</span></label>
+      <span id="flagLabelText">They never have this here</span></label>
     <div class="hint">Different from skipping. Skipping is just today; this stays on the
       list for everyone until someone clears it. The item is never removed.</div>
   </div>
@@ -670,9 +701,17 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="fld"><label>What is it for?</label>
     <input id="newListName" placeholder="e.g. Hardware, Christmas, Mom and Dad" autocomplete="off" maxlength="40"></div>
   <div class="hint" id="newListPreview"></div>
+  <div class="fld"><label>Which stores? Pick the ones this list actually goes to — the usual three are already picked</label>
+    <div class="shoppick" id="newListShops"></div>
+    <div class="hint">These tabs are what everybody sees, on every phone.</div>
+    <div class="hint" id="newListShopHint"></div></div>
+  <div class="fld" id="newListCustomWrap" hidden><label>What is the other store called?</label>
+    <input id="newListCustomName" placeholder="e.g. Bait shop, the pharmacy, Dollar General" autocomplete="off" maxlength="24">
+    <div class="hint">Keep it short — it has to fit on a tab. Leave it blank and the tab just says &ldquo;Other&rdquo;.</div></div>
   <div class="err" id="newListErr"></div>
   <div class="hint">It starts <b>empty</b> — add things yourself or paste a list in.
-    You will set its own passphrase, and only people you send the link to can see it.</div>
+    You will set its own passphrase, and only people you send the link to can see it.
+    <b>The stores are set now and cannot be changed yet</b> — if you get it wrong, start the list again.</div>
   <div class="row" style="margin-top:12px">
     <button data-close="newListSheet">Cancel</button>
     <button class="primary" id="newListGo">Create</button>
@@ -746,7 +785,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 
   <p class="wel-p">Everyone with the link sees the <b>same list</b>. Tick something off
     and it turns up on the other phones a second or two later &mdash; even from
-    inside the shop.</p>
+    inside the store.</p>
 
   <div class="wel-step">
     <b>1 &middot; Put it on your home screen</b>
@@ -761,7 +800,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 
   <div class="wel-step">
     <b>3 &middot; Go shopping</b>
-    <p>Pick the shop you are standing in at the top, then tap <b>Got</b>, <b>Swap</b>
+    <p>Pick the store you are standing in at the top, then tap <b>Got</b>, <b>Swap</b>
       or <b>Skip</b> on each row.</p>
   </div>
 

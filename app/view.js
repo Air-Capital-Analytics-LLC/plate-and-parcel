@@ -7,15 +7,58 @@
  */
 
 import { DATA } from './data.js';
-import { STATUSES, MIN_QTY, MAX_QTY } from './store.js';
+import { STATUSES, MIN_QTY, MAX_QTY, SHOP_POOL, LEGACY_SHOPS } from './store.js';
 
 export const flagKey = (itemId, storeId) => itemId + '@' + storeId;
 
-export const STORES = [
-  { id: 'sams', label: "Sam's Club", short: "Sam's" },
-  { id: 'costco', label: 'Costco', short: 'Costco' },
-  { id: 'custom', label: 'Custom shop', short: 'Custom' },
-];
+/**
+ * Which shops THIS list uses, in tab order.
+ *
+ * A shop is active when it has a record saying `on`. **No records at all means
+ * the legacy three** — Sam's, Costco, Custom — so a list that has never chosen
+ * does not move under the people using it, and nothing about the household list
+ * changes until somebody changes it on purpose.
+ *
+ * Never returns empty: a list whose every shop was somehow switched off would
+ * have no tabs, no place to file anything, and no way back. Falling to the
+ * legacy three is the recoverable answer.
+ */
+export function shopsFor(state) {
+  const recs = state?.shops || {};
+  const chosen = SHOP_POOL.filter((s) => recs[s.id] && recs[s.id].on === true);
+  const base = chosen.length
+    ? chosen
+    : SHOP_POOL.filter((s) => LEGACY_SHOPS.includes(s.id));
+
+  // ANY STORE THAT STILL HOLDS SOMETHING GETS A TAB, chosen or not.
+  //
+  // Without this an item filed under a store the list no longer uses is
+  // invisible on every phone: no tab renders it, `counts` never sees it,
+  // `findItem` returns null so the edit sheet reports it "already gone", and
+  // `buildReport` leaves it out of the export the threat model calls the last
+  // resort. The record is intact and synced the whole time — it is simply
+  // unreachable, with no way back short of the Firebase console. §1: the list
+  // is never silently smaller. This is the one-line expression of that.
+  const have = new Set(base.map((s) => s.id));
+  const orphans = [];
+  for (const id of Object.keys(state?.added || {})) {
+    const a = state.added[id];
+    if (!a || a.del || have.has(a.store)) continue;
+    have.add(a.store);
+    const pool = SHOP_POOL.find((s) => s.id === a.store);
+    if (pool) orphans.push(pool);
+  }
+  const active = orphans.length
+    ? SHOP_POOL.filter((s) => have.has(s.id))   // keep pool order
+    : base;
+
+  return active.map((s) => {
+    // A name somebody typed replaces BOTH forms. They chose it; they decided
+    // how short it should be.
+    const own = recs[s.id] && typeof recs[s.id].label === 'string' && recs[s.id].label.trim();
+    return own ? { id: s.id, label: own, short: own } : s;
+  });
+}
 
 const FROZEN_RE = /\s*[—-]\s*MUST BE FROZEN/i;
 
@@ -115,7 +158,12 @@ export function isCatalogueId(id) { return catalogueIds().has(id); }
 /** The row as it is actually shown, override applied. Used by the edit sheet,
  *  which is handed an id and has to fill a form from it. */
 export function findItem(state, id) {
-  for (const store of ['sams', 'costco', 'custom']) {
+  // Every shop this list uses, not the catalogue's three. An item filed under
+  // Target is invisible to a three-store loop, and the edit sheet is handed an
+  // id and told to fill a form from it — so it would have reported the row
+  // "already gone" for a row sitting on screen.
+  const ids = new Set([...shopsFor(state).map((s) => s.id), 'sams', 'costco', 'custom']);
+  for (const store of ids) {
     for (const sec of buildGroups(state, store)) {
       for (const it of sec.items) if (it.id === id) return { ...it, store };
     }
@@ -127,7 +175,13 @@ export function buildGroups(state, storeId) {
   // Never index blind. A corrupt `ui.store` reaching here threw on every paint,
   // which the renderer's catch then turned into a permanent error card offering
   // a recovery that could not work.
-  const base = baseGroups()[storeId] || baseGroups().sams;
+  //
+  // EMPTY, not `.sams`. The catalogue only knows Sam's, Costco and Custom, so
+  // every other shop legitimately has no base groups — and falling back to
+  // Sam's would print the entire club catalogue under Target. An unknown id
+  // showing nothing is right for both cases: a new shop starts empty, and a
+  // corrupt id shows an empty shop instead of somebody else's contents.
+  const base = baseGroups()[storeId] || [];
   const added = state.added || {};
   const out = [];
   const baseIds = new Set();
@@ -199,10 +253,13 @@ export function counts(state, storeId) {
 /* ---------- markup ---------- */
 
 export function tabsHTML(state) {
-  return STORES.map((s) => {
+  return shopsFor(state).map((s) => {
     const c = counts(state, s.id);
-    return `<button class="pxl tab${state.ui.store === s.id ? ' on' : ''}" data-store="${s.id}">`
-      + `${esc(s.short)}<span class="n">${c.done}/${c.total}</span></button>`;
+    // `.face` so a name somebody typed truncates instead of wrapping the strip
+    // onto a second line — the tab row's height is load-bearing for the sticky
+    // header. `title` gives the full name back on a device that can show one.
+    return `<button class="pxl tab${state.ui.store === s.id ? ' on' : ''}" data-store="${s.id}" title="${esc(s.label)}">`
+      + `<span class="face">${esc(s.short)}</span><span class="n">${c.done}/${c.total}</span></button>`;
   }).join('');
 }
 
@@ -277,10 +334,15 @@ export function itemHTML(item, state, opts = {}) {
   const flagBy = state.flags[flagKey(item.id, storeId)]?.by || '';
   const otherStore = storeId === 'sams' ? 'costco' : 'sams';
   const flaggedBoth = flagged && !!state.flags[flagKey(item.id, otherStore)]?.f;
+  // The "try somewhere else" bucket, resolved against THIS list. It used to be
+  // the words "Custom shop" hardcoded — which names a tab that may have been
+  // renamed, or that this list may not have at all, and §3 forbids a dead end.
+  const otherBucket = shopsFor(state).find((s) => s.id === 'custom');
   const flagRow = flagged
     ? `<div class="flagline" data-unflag="${esc(item.id)}">`
       + `<b>Not stocked here</b>${flagBy ? ' &middot; ' + esc(flagBy) : ''}`
-      + (flaggedBoth && !item.custom ? ' &mdash; flagged at both clubs, consider moving it to Custom shop' : '')
+      + (flaggedBoth && !item.custom && otherBucket
+        ? ` &mdash; nobody can find it at either store, try moving it to ${esc(otherBucket.short)}` : '')
       + ` <span class="pencil">&#10005;</span></div>`
     : '';
 
@@ -349,7 +411,7 @@ export function buildReport(state) {
   const L = [`SHOPPING TRIP — ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, ''];
   const nm = (i) => splitFrozen(i.name).text + (splitFrozen(i.name).frozen ? ' (FROZEN)' : '');
 
-  for (const s of STORES) {
+  for (const s of shopsFor(state)) {
     const flat = buildGroups(state, s.id)
       .flatMap((g) => g.items)
       .filter((i) => onTrip(state, i, false));

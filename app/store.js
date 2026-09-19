@@ -34,7 +34,7 @@ export const STATUSES = ['got', 'swap', 'skip'];
 export const TEXT_SIZES = ['Normal', 'Large', 'Largest'];
 
 /**
- * The four synced collections.
+ * The synced collections.
  *
  * Each is an independent last-writer-wins register, and that separation is the
  * whole point: merge resolves per RECORD, so if "planned for this trip" or
@@ -47,12 +47,52 @@ export const TEXT_SIZES = ['Normal', 'Large', 'Largest'];
  * write that most needs to survive aisle 7, so it goes first. That is currently
  * true by luck — prepending a kind, or slotting `price` in ahead of `items`,
  * would silently demote every tick on exactly the link where one body per retry
- * is all you get.
+ * is all you get. For the same reason `shops` is LAST: which shops a list uses
+ * is configuration, set once, and it must never delay a tick.
  *
  * `ui`, `me` and `outbox` are reserved names in the persisted blob: `load()`
  * and `snapshot()` both iterate this array against that same object.
  */
-export const KINDS = ['items', 'added', 'plan', 'flags', 'qty'];
+export const KINDS = ['items', 'added', 'plan', 'flags', 'qty', 'shops'];
+
+/**
+ * The shops a list can choose from.
+ *
+ * Lives HERE, not in `view.js`, because `load()` has to validate `ui.store`
+ * against it and `store.js` must never import `view.js` — that is the circular
+ * import the rulebook lists under "held under scrutiny". `view.js` imports it
+ * the other way, which is the direction that already exists.
+ *
+ * `short` is the tab face; `label` is the sentence form. A list that renames a
+ * shop overrides both with one string, because somebody who types their own
+ * name for a shop has already decided how short it should be.
+ *
+ * ORDER IS TAB ORDER. `custom` stays last: it is the "anywhere else" bucket and
+ * it reads as the end of a list, not a peer of the named shops.
+ */
+export const SHOP_POOL = [
+  { id: 'sams', label: "Sam's Club", short: "Sam's" },
+  { id: 'costco', label: 'Costco', short: 'Costco' },
+  { id: 'target', label: 'Target', short: 'Target' },
+  { id: 'walmart', label: 'Walmart', short: 'Walmart' },
+  { id: 'aldi', label: 'Aldi', short: 'Aldi' },
+  { id: 'dillons', label: 'Dillons', short: 'Dillons' },
+  { id: 'custom', label: 'Another store', short: 'Other' },
+];
+
+export const SHOP_IDS = SHOP_POOL.map((s) => s.id);
+
+/**
+ * What a list shows when it has never chosen: the three it had before shops
+ * were selectable. Absence means "unchanged", so the household list does not
+ * move under the people using it, and a phone still running an older build
+ * keeps showing exactly what it shows today.
+ */
+export const LEGACY_SHOPS = ['sams', 'costco', 'custom'];
+
+/** A shop name somebody typed. Bounded so it cannot blow the 1024-char
+ *  ciphertext cap on this collection, and so it cannot fill a tab face. */
+export const MAX_SHOP_LABEL = 24;
 
 /**
  * The outbox key. `kind:id`, never a bare id — see LEDGER M15.
@@ -147,6 +187,12 @@ export function isWellFormed(rec, kind) {
   } else if (kind === 'qty') {
     if (typeof rec.q !== 'number' || !Number.isInteger(rec.q)) return false;
     if (rec.q < MIN_QTY || rec.q > MAX_QTY) return false;
+  } else if (kind === 'shops') {
+    // One record per shop, so two people choosing different shops at the same
+    // time both get their way — the same reason `qty` is its own register.
+    if (typeof rec.on !== 'boolean') return false;
+    if (!isStr(rec.label)) return false;
+    if (typeof rec.label === 'string' && rec.label.length > MAX_SHOP_LABEL) return false;
   } else if (kind === 'added') {
     if (typeof rec.name !== 'string') return false;
     if (!isStr(rec.note) || !isStr(rec.store) || !isStr(rec.by)) return false;
@@ -184,6 +230,7 @@ export function createStore({ ns = 'household' } = {}) {
     plan:  Object.create(null),   // itemId -> {p, t, c}        on this trip?
     qty:   Object.create(null),   // itemId -> {q, t, c}        how many (1 = unset)
     flags: Object.create(null),   // "<itemId>@<store>" -> {f, by, t, c}  not stocked here
+    shops: Object.create(null),   // shopId -> {on, label, t, c}  which shops this list uses
     outbox: Object.create(null),  // "<kind>:<id>" -> kind      durable dirty set
     ui: { store: 'sams', hideDone: false, text: 0 },
     me: { id: '', name: '' },
@@ -219,6 +266,13 @@ export function createStore({ ns = 'household' } = {}) {
         // dominant failure mode. The price KIND is the next one along.
         for (const kind of KINDS) {
           for (const [id, rec] of Object.entries(o[kind] || {})) {
+            // The same key gate `mergeRemote` applies. A junk shop id cannot
+            // get into the blob through either writer today, but a blob written
+            // by a build with a different pool — or a hand-edited one — would
+            // survive a reload, and from there `requeueAll` arms it and the
+            // phone re-uploads an immortal phantom forever. The two gates must
+            // not drift, which is the argument `CLIENT_ID` already won above.
+            if (kind === 'shops' && !SHOP_IDS.includes(id)) continue;
             if (isWellFormed(rec, kind)) state[kind][id] = rec;
             // Keep the author with the key. The count below has to ask "was
             // this OUR work", and by then the record is gone — and `state.me`
@@ -264,7 +318,12 @@ export function createStore({ ns = 'household' } = {}) {
         }
         Object.assign(state.ui, o.ui || {});
         // A corrupt ui.store used to reach buildGroups and throw on every paint.
-        if (!['sams', 'costco', 'custom'].includes(state.ui.store)) state.ui.store = 'sams';
+        // Structural check only: is this a shop id at all. WHETHER it is one
+        // this list currently uses is a view question, answered at render, and
+        // asking it here would need view.js — the circular import that is not
+        // allowed. A valid id pointing at a switched-off shop simply falls back
+        // to the first active tab when it is painted.
+        if (!SHOP_IDS.includes(state.ui.store)) state.ui.store = 'sams';
         state.ui.hideDone = !!state.ui.hideDone;
         // Up to v7 this was a boolean `big`. It never actually worked — the
         // scale was applied to `body`, while every rule in the sheet sizes in
@@ -658,6 +717,27 @@ export function createStore({ ns = 'household' } = {}) {
     emit({ type: 'flags', id: k });
   }
 
+  /**
+   * Turn a shop on or off for this list, and/or name it.
+   *
+   * One record per shop rather than one record holding the set, so two people
+   * choosing different shops at the same moment both get their way instead of
+   * one silently overwriting the other. Same argument as `qty`.
+   */
+  function setShop(shopId, patch) {
+    if (!SHOP_IDS.includes(shopId)) return false;
+    const cur = state.shops[shopId];
+    const label = patch.label === undefined
+      ? String(cur?.label ?? '')
+      : String(patch.label ?? '').trim().slice(0, MAX_SHOP_LABEL);
+    const on = patch.on === undefined ? !!cur?.on : !!patch.on;
+    state.shops[shopId] = stamp({ on, label });
+    state.outbox[obKey('shops', shopId)] = 'shops';
+    persist();
+    emit({ type: 'shops', id: shopId });
+    return true;
+  }
+
   function clearAllMarks() {
     for (const id of Object.keys(state.items)) {
       if (!state.items[id] || state.items[id].s == null) continue;
@@ -755,6 +835,14 @@ export function createStore({ ns = 'household' } = {}) {
       for (const id of Object.keys(incoming)) {
         const rec = incoming[id];
         if (!isWellFormed(rec, kind)) continue;
+        // `isWellFormed` is handed a record, never an id, so it cannot judge
+        // one. A `shops` key that is not a real store would otherwise merge,
+        // get armed by `requeueAll`, counted on the badge, and re-uploaded by
+        // the family's own phones forever — nothing prunes it and the rules
+        // forbid deleting it. It never reaches the DOM (`shopsFor` filters
+        // against the pool), but §1 says the badge is not decoration, and a
+        // badge that counts an immortal phantom is a badge that lies.
+        if (kind === 'shops' && !SHOP_IDS.includes(id)) continue;
         observeClock(rec.t);
         const cur = into[id];
         if (!wins(rec, cur)) continue;
@@ -843,7 +931,7 @@ export function createStore({ ns = 'household' } = {}) {
    * real-world action should win, and `mergeRemote` reports any of our pending
    * writes that lose so the user is told rather than surprised.
    *
-   * That trade is FIVE KINDS WIDE now, not two. It was written when the outbox
+   * That trade is EVERY KIND WIDE now, not two. It was written when the outbox
    * effectively held one entry per row, so it bulldozed the last thing you did
    * to a row; it now covers that row's tick, its plan entry, its quantity and
    * its not-stocked flags together. That is the intended behaviour — they are
@@ -896,13 +984,14 @@ export function createStore({ ns = 'household' } = {}) {
    * after 7 days; `writeThrough` already has a handler for exactly that) or a
    * fresh device opens the link, at which point the plan is simply missing with
    * no event to explain it. The argument above for re-arming unconditionally
-   * covers all five kinds unchanged.
+   * covers every kind unchanged.
    */
   function requeueAll() {
     // Counts NEWLY-ARMED ROWS, not records, and both halves of that matter.
     //
     // "Newly armed": root emptiness is judged on `items` and `added` only (see
-    // sync.js), so a brand-new list where the family has planned a trip but
+    // sync.js) AND the caller now also checks this device holds something, so a
+    // brand-new list where the family has planned a trip but
     // nobody has ticked anything yet looks empty on every reconnect. While this
     // counted `items` + `added` the count was 0 there and nothing happened;
     // counting all five would have made a flapping link re-upload the whole
@@ -937,7 +1026,7 @@ export function createStore({ ns = 'household' } = {}) {
     setStatus, addItem, editAdded, upsertAdded, removeAdded, restoreHidden, hiddenCount, clearAllMarks, setUI, setName,
     hasPlan, isPlanned, setPlanned, clearPlan, replanFromLastTrip,
     getQty, setQty, bumpQty,
-    isFlagged, flagInfo, setFlag, parseList, importItems,
+    isFlagged, flagInfo, setFlag, setShop, parseList, importItems,
     mergeRemote, pendingOps, ackOps, pendingCount, requeueAll, restampPending,
     flushPersist, isPersistBroken, takeDroppedWork, reset, wins, isWellFormed,
   };

@@ -156,7 +156,37 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
       // shared work; `plan` and `flags` alone are not evidence the list exists.
       const noItems = !data || !data.items || !Object.keys(data.items).length;
       const noAdded = !data || !data.added || !Object.keys(data.added).length;
+      // Emptiness is still judged on `items`/`added` ONLY.
+      //
+      // An earlier cut of v27 added `shops` to this test, to stop a brand-new
+      // list being judged empty on every reconnect and toasting "Restoring N
+      // from this phone" for its whole first hour. That fixed the symptom in
+      // the wrong place: it also meant a list whose items were genuinely lost
+      // while its store records survived no longer looked empty, so nothing
+      // put the list back — §4's invariant, quietly conditional on what else
+      // happened to be on the server. The caller decides whether it holds
+      // anything worth restoring; that is where "while holding local state"
+      // belongs. See `onEmptySnapshot` in main.js.
       if (data == null || (noItems && noAdded)) {
+        // MERGE WHAT IS THERE FIRST. "This snapshot proves no shared work
+        // exists" and "throw away everything in it" are two different
+        // statements, and only the first was ever intended. The early return
+        // discarded the snapshot wholesale, so a list holding only `plan`,
+        // `qty` or `flags` records handed them to a second phone and then
+        // dropped them on the floor — and that phone went on to file its items
+        // under stores the list does not have.
+        // Wrapped, because everything below it is the LOSS SIGNAL and must run
+        // whatever this does. `decodeMap` cannot reject today, but `sync.js`
+        // exists to be swappable, and a codec whose `decode` rejects would
+        // silently disable §4's loss detection while `SNAPSHOT_WAIT` quietly
+        // covered for the stalled write gate — hiding it.
+        try {
+          if (data && typeof data === 'object') {
+            const partial = {};
+            for (const k of KINDS) if (data[k]) partial[k] = await decodeMap(data[k], k);
+            if (Object.keys(partial).length) onRemote(partial, {});
+          }
+        } catch { /* a bad record must never cost us the loss signal */ }
         // Release before handing over: the caller re-arms the outbox and drains,
         // and that drain must not be refused by the gate it is the answer to.
         releaseSnapshotGate('empty');
