@@ -41,16 +41,31 @@
    the stylesheet only ever needs one selector. Never throws: private mode makes
    localStorage itself throw on read, and a theme is not worth a blank app. */
 (function () {
-  var DARK = '#12141c', LIGHT = '#f2f4f8';
-  var t;
+  /* Four grounds, because v33 added a second SKIN on top of the two themes and
+     the browser chrome has to match whichever of the four is about to paint.
+     Keyed skin-then-theme, and duplicated in main.js as THEME_COLOR - the two
+     copies exist because this script cannot import a module and still run
+     before the first paint. If a ground colour ever changes, both move. */
+  var GROUND = {
+    retro: { dark: '#12141c', light: '#f2f4f8' },
+    lux:   { dark: '#0f1411', light: '#f5f1e8' }
+  };
+  var t, k;
   try { t = localStorage.getItem('pnp.theme'); } catch (e) { t = null; }
+  try { k = localStorage.getItem('pnp.skin'); } catch (e) { k = null; }
   if (t !== 'light' && t !== 'dark') {
     t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches)
       ? 'light' : 'dark';
   }
+  /* Retro is the default and gets NO attribute: every rule in the stylesheet is
+     written for it, and `html[data-skin="lux"]` overrides on top. An absent
+     attribute is also what an older cached copy of this file produces, so a
+     half-updated install lands on the skin it already knows how to draw. */
+  if (k !== 'lux') k = 'retro';
   document.documentElement.setAttribute('data-theme', t);
+  if (k === 'lux') document.documentElement.setAttribute('data-skin', 'lux');
   var m = document.querySelector('meta[name="theme-color"]');
-  if (m) m.setAttribute('content', t === 'light' ? LIGHT : DARK);
+  if (m) m.setAttribute('content', GROUND[k][t]);
 })();
 </script>
 <style>
@@ -67,13 +82,44 @@
   --accent:#ffd43b; --accent-ink:#ffd43b; --on-accent:#1b1e2b;
 
   /* STATUS: the fill, and the ink that sits on that fill. */
-  --got:#69db7c; --on-got:#10240f;
-  --swap:#4dabf7; --on-swap:#06243d;
-  --skip:#ff6b6b; --on-skip:#3d0a0a;
+  /* SEPARATED BY LIGHTNESS, not only by hue (v33). Blue and coral are nearly
+     the same brightness, so the old trio was hard to read in normal vision and
+     every kind of colour blindness made it worse. Lightness is the one cue that
+     survives all of them, so these run light / mid / dark, and Skip is oxblood
+     rather than crimson because the crimson sat at the same brightness as the
+     azure once red and green had collapsed together.
 
-  /* One colour per store, roughly the colour of the sign over the door, so the
+     RE-CUT TWICE, the second time because a test disagreed with this comment.
+     The first cut was signed off on a figure that turned out to be the BEST of
+     the three colourblindness simulations rather than the worst - run properly,
+     Swap and Skip were within a few percent of each other under deuteranopia,
+     which is to say they were the same button, in the default skin and the
+     default theme.
+
+     NO FIGURES ARE QUOTED HERE ON PURPOSE. Every one this comment used to carry
+     was stale or wrong within a day, which is the whole reason the numbers now
+     live in `tests/v33_probe.mjs`: it recomputes ink-on-fill, mark-on-panel,
+     lightness spread and all three Vienot-Brettel-Mollon simulations for all
+     four skin x theme palettes on every run, and prints what it measured. Read
+     them from a run, not from here. */
+  --got:#b2f2bb; --on-got:#08230d;
+  --swap:#4dabf7; --on-swap:#06243d;
+  --skip:#690b0b; --on-skip:#ffffff;
+  /* The same three as INK on the panel rather than as a fill. See `.mk`. */
+  --got-ink:#b2f2bb; --swap-ink:#4dabf7; --skip-ink:#ff8787;
+
+  /* THESE ARE INK, NOT FILLS. They colour the tab LABEL (and `.getat`), and the
+     selected tab's outline - nothing is ever filled with them. v33 first re-cut
+     them off the mockup, where a tab was drawn as a filled chip, and inverted
+     their lightness as a result: Costco came out white-on-white in light mode
+     and Other came out forest-green on near-black. Every one of the seven is
+     now held to 4.5:1 against the surface it is DRAWN on, in both tab states -
+     unselected tabs carry `--tab-dim`, so the ink and the fill composite
+     together toward the page and the check has to model that. The v33 probe
+     computes all of it.
+     One colour per store, roughly the colour of the sign over the door, so the
      tab you want is findable without reading it. */
-  --sams:#74c0fc; --costco:#ffb3b3; --custom:#63e6be;
+  --sams:#5baef3; --costco:#e9ecef; --custom:#36c153;
   /* The four stores added in v27. There are already eight meaningful colours in
      this file (three statuses, three original stores, planning violet, brand
      gold), so perfect separation of twelve is not available and pretending
@@ -117,12 +163,19 @@ html[data-theme="light"]{
 
   --accent:#ffd43b; --accent-ink:#7a5c00; --on-accent:#2a2200;
 
-  --got:#2f9e44; --on-got:#ffffff;
+  /* LIGHT MODE CARRIED A REAL FAILURE: #2f9e44 under white text is 3.45:1,
+     below the 4.5:1 this project holds itself to, and it shipped. The cause was
+     structural - forcing white ink on all three forces all three dark, which
+     compresses them into one brightness. Letting Got be a LIGHT fill with dark
+     ink fixes the contrast and buys the spread at the same time. The probe
+     prints the current figure; this comment deliberately does not. */
+  --got:#b2f2bb; --on-got:#08230d;
   --swap:#1971c2; --on-swap:#ffffff;
-  --skip:#e03131; --on-skip:#ffffff;
+  --skip:#8f0f0f; --on-skip:#ffffff;
+  --got-ink:#1c6e2c; --swap-ink:#1971c2; --skip-ink:#a51111;
 
-  --sams:#1263ab; --costco:#a31f1f; --custom:#04543f;
-  --target:#b5480a; --walmart:#0b7285; --aldi:#5c7c1f; --dillons:#a61e4d;
+  --sams:#114e86; --costco:#3e4b57; --custom:#0b4f37;
+  --target:#853507; --walmart:#085361; --aldi:#3b5014; --dillons:#9d1c49;
 
   --plan:#7048e8; --plan-ink:#5f3dc4; --on-plan:#ffffff;
 
@@ -136,6 +189,109 @@ html[data-theme="light"]{
   --bevel-lo:rgba(23,25,34,.28);
   --bevel-edge:#aeb6c8;
 }
+/* ============================ LUX =====================================
+   The second skin (v33). A gentleman's club at night: hunter green, aged
+   brass, oxblood, steel blue. It is COLOUR AND ORNAMENT ONLY - not one size,
+   space or tap target moves, so nothing has to be re-measured at the Largest
+   text setting.
+
+   THE ORNAMENT IS A GRADIENT PLUS TWO HARD INSET LINES. Retro's cue is the
+   pixel bevel - shape and lighting; Lux's is a lit, slightly domed surface.
+   Both are drawn on the SAME box.
+
+   EVERY HAIRLINE IS AN INSET SHADOW, NEVER A BORDER, and that is load-bearing
+   rather than fussy: a 1px border adds 2px to a control's box, which is 18px
+   on an Edit sheet already at 2.06 sheet-heights and 116px of scroll on a
+   58-row list. An inset shadow looks identical and adds nothing.
+
+   NO BLUR ANYWHERE. `filter`, `backdrop-filter` and blurred `box-shadow` on a
+   row are all refused by the rulebook - the scroller already holds ~348
+   clipped, isolated, inset-shadowed elements. Every shadow here is 0-blur. */
+html[data-skin="lux"]{
+  --bg:#0f1411; --panel:#18201a; --panel2:#1f2a22; --line:#2c3a2c;
+  --ink:#efe9dc; --muted:#a39a86;
+  --shadow:rgba(0,0,0,.6);
+
+  --accent:#c9a961; --accent-ink:#d6b978; --on-accent:#1a1f16;
+
+  --got:#c9a961; --on-got:#1a1f16;
+  --got-ink:#d6b978; --swap-ink:#7d9cb5; --skip-ink:#c98086;
+  --swap:#5a7892; --on-swap:#ffffff;
+  --skip:#57262a; --on-skip:#ffffff;
+
+  --sams:#c9a961; --costco:#8aa2b8; --custom:#ded3bb;
+  --target:#b894b3; --walmart:#85a2b9; --aldi:#8fa87e; --dillons:#bf949c;
+
+  --plan:#8f7fb0; --plan-ink:#b6a6d4; --on-plan:#14110c;
+
+  --frozen-bg:#26323a; --frozen-ink:#a8c7d8;
+  --warn-bg:#2e2718; --warn-line:#5c4a25; --warn-ink:#e0cfa4; --warn-strong:#d6b978;
+  --badge-ok:#9fc08a; --badge-warn:#d6b978; --badge-bad:#c98086;
+  --danger:#c98086;
+  --tab-dim:.88;
+
+  /* The bevel tokens still exist because the pixel geometry is shared; Lux
+     simply lights it far more softly, so the shape reads as a domed surface
+     rather than a chunky chamfer. */
+  --bevel-hi:rgba(255,255,255,.30);
+  --bevel-lo:rgba(0,0,0,.34);
+  --bevel-edge:#6b5a34;
+}
+/* PRESSED, IN LUX. Retro's press flips a 3px bevel and that reads on its own.
+   Lux's bevel is a 1px hairline, so on every button whose FILL does not change
+   under the thumb - Save, Cancel, Close, every sheet button - the flip alone
+   was almost nothing. Inverting the gloss as well turns the lit dome into a
+   pressed dish, which is the same gesture Retro makes, drawn the Lux way. Still
+   one gradient and still no blur, so it costs a repaint of one button. */
+html[data-skin="lux"] .pxl:active::before,
+html[data-skin="lux"] .sheet button:active::before,
+html[data-skin="lux"] .installbar button:active::before,
+html[data-skin="lux"] .fab:active::before,
+html[data-skin="lux"] .fab2:active::before,
+html[data-skin="lux"] .planbar:active::before,
+html[data-skin="lux"] .planbtn:active::before,
+html[data-skin="lux"] .rm:active::before,
+html[data-skin="lux"] .qty button:active::before{
+  background:var(--gloss-down),var(--fill,var(--panel2));
+}
+html[data-skin="lux"]{
+  --gloss-down:linear-gradient(180deg,
+    rgba(0,0,0,.20) 0%, rgba(0,0,0,.08) 49%,
+    rgba(255,255,255,.05) 50%, rgba(255,255,255,.13) 100%);
+}
+html[data-skin="lux"][data-theme="light"]{
+  --gloss-down:linear-gradient(180deg,
+    rgba(0,0,0,.13) 0%, rgba(0,0,0,.05) 49%,
+    rgba(255,255,255,.14) 50%, rgba(255,255,255,.42) 100%);
+}
+html[data-skin="lux"][data-theme="light"]{
+  --bg:#f5f1e8; --panel:#fffdf7; --panel2:#ece5d6; --line:#ddd3bd;
+  --ink:#23201a; --muted:#5d574a;
+  --shadow:rgba(60,48,20,.18);
+
+  --accent:#e8cf8f; --accent-ink:#6b5320; --on-accent:#241c05;
+
+  --got:#e8cf8f; --on-got:#241c05;
+  --got-ink:#6b5320; --swap-ink:#3d6180; --skip-ink:#7a2e33;
+  --swap:#4a7391; --on-swap:#ffffff;
+  --skip:#45191c; --on-skip:#ffffff;
+
+  --sams:#765a18; --costco:#705d33; --custom:#2f4a34;
+  --target:#6d4a66; --walmart:#3c647e; --aldi:#566445; --dillons:#7f5358;
+
+  --plan:#6d5b8f; --plan-ink:#584a75; --on-plan:#ffffff;
+
+  --frozen-bg:#dde7ec; --frozen-ink:#2f5a72;
+  --warn-bg:#fdf5e3; --warn-line:#e2d3ab; --warn-ink:#6b5320; --warn-strong:#8a6a1c;
+  --badge-ok:#2f5a2a; --badge-warn:#7d5f18; --badge-bad:#8a353b;
+  --danger:#8a353b;
+  --tab-dim:.96;
+
+  --bevel-hi:rgba(255,255,255,.85);
+  --bevel-lo:rgba(60,48,20,.16);
+  --bevel-edge:#c3b48f;
+}
+
 *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
 /* TEXT SIZE LIVES HERE, ON html, AND NOWHERE ELSE.
    Nearly every size in this sheet is in `rem`. `rem` resolves against the ROOT
@@ -277,7 +433,12 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .listname:empty{display:none;}
 .pbar{height:4px; background:var(--panel2); border-radius:2px; margin-top:8px; overflow:hidden;}
-.pbar>div{height:100%; background:var(--got); width:0; transition:width .25s;}
+/* `--got-ink`, not `--got`. The fill is a pale mint in both themes - that
+   paleness is what buys the lightness spread the status buttons need - and a
+   pale mint bar on the `--panel2` track measured 1.07:1 in light mode, which is
+   an invisible progress bar. Three rules read the fill token as ink like this;
+   all three now take the ink one. */
+.pbar>div{height:100%; background:var(--got-ink); width:0; transition:width .25s;}
 .pmeta{display:flex; justify-content:space-between; font-size:.72rem; color:var(--muted); margin-top:5px;}
 /* Bigger than `.pmeta` on purpose: this is a number somebody squints at across
    an aisle, and it is the only figure on the screen that answers "can we
@@ -296,11 +457,58 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .sec b{font-size:.84rem; letter-spacing:.08em; text-transform:uppercase; color:var(--accent-ink);}
 .sec span{font-size:.72rem; color:var(--muted); flex-shrink:0;}
 .item{background:var(--panel); border-radius:var(--radius); padding:11px 12px; margin-bottom:8px; border-left:3px solid transparent;}
-.item.got{border-left-color:var(--got); opacity:.55;}
-.item.swap{border-left-color:var(--swap);}
-.item.skip{border-left-color:var(--skip); opacity:.55;}
+.item.got{border-left-color:var(--got-ink);}
+.item.swap{border-left-color:var(--swap-ink);}
+.item.skip{border-left-color:var(--skip-ink);}
+/* A HANDLED ROW RECEDES - BUT NOT THE MARK ON IT.
+   `opacity` on `.item` composites the whole group, mark included, and the two
+   statuses that carry a mark most often are exactly the two that were dimmed.
+   Measured: the Got mark went from 12.87:1 to 4.81:1 and Skip from 7.16:1 to
+   3.07:1 in Retro dark, and seven of the eight fell under the 4.5:1 this
+   release holds itself to. The tick was the faintest thing on a ticked row -
+   the accessibility cue washed out on precisely the rows it exists for.
+   So the dim is applied to the CONTENTS instead, and `.mk` is not in the list.
+   The mark is the one thing on a finished row that stays at full strength,
+   which is also the right answer visually: it is what the row now says. */
+.item.got .nmt,.item.skip .nmt,
+.item.got .det,.item.skip .det,
+.item.got .alt,.item.skip .alt,
+.item.got .why,.item.skip .why,
+.item.got .getat,.item.skip .getat,
+.item.got .who,.item.skip .who,
+.item.got .frozen,.item.skip .frozen,
+.item.got .pricetag,.item.skip .pricetag,
+.item.got .qty,.item.skip .qty,
+.item.got .rm,.item.skip .rm,
+.item.got .noteline,.item.skip .noteline,
+.item.got .acts,.item.skip .acts{opacity:.55;}
 .item.cust{border-left-color:var(--custom);}
-.item.got .nm,.item.skip .nm{text-decoration:line-through;}
+/* The strike now lands on the NAME only, not on the whole row. It used to sit
+   on `.nm`, which meant the price, the quantity badge, the FROZEN warning and
+   the new status mark were all struck through with it - and a crossed-out
+   $18.98 says the price was cancelled, which is not what happened. The mark in
+   particular has to stay clean: it is the cue for someone who cannot use the
+   colour, so a line through it is a line through the accessibility fix. */
+.item.got .nmt,.item.skip .nmt{text-decoration:line-through;}
+
+/* THE STATUS MARK. Shape carrying what colour cannot. Even after v33 re-cut
+   all four palettes, the closest pair of status fills under deuteranopia sits
+   below 2:1 - enough to tell apart when you are looking for it, not enough to
+   read at a glance in a shop - so the state is also drawn as a shape. On the
+   row the mark takes the status colour; on the three buttons it inherits the
+   button's own ink, because there it sits ON the fill rather than beside it. */
+.mk{font-weight:700; flex-shrink:0; line-height:1;}
+/* NOT `var(--got)` and friends. Those are FILL colours, chosen to be told
+   apart from each other when they sit side by side as three solid buttons -
+   and one of the three is deliberately pale in every theme, because a light
+   fill among two dark ones is what buys the lightness spread that survives
+   colourblindness. Drawn as ink on the panel instead, a pale fill is a smudge -
+   mint Got on a white row measures well under 2:1, and the dark oxblood Skip is
+   no better on a dark one. So the marks read a separate `-ink` token - same hue,
+   re-picked for contrast against the panel it is actually drawn on. */
+.mk-got{color:var(--got-ink);}
+.mk-swap{color:var(--swap-ink);}
+.mk-skip{color:var(--skip-ink);}
 .nm{font-weight:600; font-size:.97rem; margin-bottom:2px; display:flex; align-items:center; flex-wrap:wrap; gap:5px;}
 .frozen{font-size:.6rem; background:var(--frozen-bg); color:var(--frozen-ink); border-radius:5px; padding:2px 6px; letter-spacing:.05em;}
 .who{font-size:.6rem; background:var(--panel2); color:var(--muted); border-radius:5px; padding:2px 6px; font-weight:500;}
@@ -341,6 +549,28 @@ input:disabled{opacity:.5; background:var(--panel);}
    buttons were visible, and the instant a paste parsed, the preview pushed the
    button they came for off screen. Sticky costs one rule and means the answer
    is always reachable however long the list is. */
+/* THE WAY OUT OF THE WELCOME SHEET, PINNED.
+   Measured at the Largest text size on a 320px phone: the sheet is 1276px of
+   content in a 500px window, and "Got it - let's go" sat 716px below the fold.
+   Step 4 alone is 465px - nearly a full screen - so a first-time user can be
+   scrolling inside ONE step with no step boundary in view and no reason to
+   believe there is a button at the bottom at all. Behind this sheet is the
+   passphrase gate, so not finding the button means not reaching the app.
+
+   It was already below the fold before v33; adding a third control to step 4
+   is what made it worth fixing rather than noting. Same remedy as the Add and
+   Edit sheets below, and the same ruling behind it (LEDGER M31): inserting
+   content above an action moves the action, so the action gets pinned instead
+   of the copy getting cut. */
+#welcomeSheet .wide.primary{
+  position:sticky; bottom:0; z-index:1;
+  background:var(--accent); padding-top:12px; padding-bottom:12px;
+  /* Masks BOTH ways. Content that follows a pinned sticky element scrolls
+     underneath it, so without the second band the trailing hint slides out
+     past the button's bottom edge into the sheet's padding. Two hard bands of
+     the sheet's own colour, no blur - this is a scrolling container. */
+  box-shadow:0 -12px 0 0 var(--panel), 0 12px 0 0 var(--panel);}
+
 #importSheet .row, #addSheet .row, #editSheet .row:first-of-type{
   position:sticky; bottom:0; background:var(--panel); padding-top:10px;
   /* A TOP EDGE, because a pinned row with nothing above it reads as the bottom
@@ -480,7 +710,7 @@ input:disabled{opacity:.5; background:var(--panel);}
   --fill:var(--accent); color:var(--on-accent);}
 .installbar button.ghost{--fill:var(--panel2); color:var(--muted); border:none;}
 #installBody p{font-size:.88rem; line-height:1.55; margin-bottom:10px;}
-#installBody .ok-line{color:var(--got); font-weight:600;}
+#installBody .ok-line{color:var(--got-ink); font-weight:600;}
 #installBody .hint{font-size:.78rem; color:var(--muted);}
 ol.steps{margin:0 0 10px 20px; font-size:.9rem; line-height:1.75;}
 ol.steps li{margin-bottom:4px;}
@@ -542,7 +772,13 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .planbtn,
 .rm,
 .qty button{
-  --px:3px;
+  /* Indirect on purpose. A skin needs to change the bevel depth, but it can
+     only set tokens on <html>, and a value set directly ON an element always
+     beats one inherited into it - so `--px:3px` here would be unreachable from
+     `html[data-skin]` no matter how specific the skin's selector was. Reading
+     an INHERITED token instead means the skin sets one line on <html> and every
+     rule below follows, with no duplicated selector list. */
+  --px:var(--px-base,3px);
   position:relative; isolation:isolate;
   border:none; border-radius:0;
   background:var(--bevel-edge);
@@ -558,7 +794,11 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .rm::before,
 .qty button::before{
   content:''; position:absolute; inset:var(--px); z-index:-1;
-  background:var(--fill,var(--panel2));
+  /* Two layers: an optional gloss image over the flat fill. Retro leaves
+     `--gloss` unset and gets `none` - one no-op image layer, no repaint cost -
+     while Lux hands it a gradient. One declaration serves both skins, so the
+     nine-selector list above is never written twice. */
+  background:var(--gloss,none),var(--fill,var(--panel2));
   -webkit-clip-path:var(--pxl-shape); clip-path:var(--pxl-shape);
   box-shadow:inset var(--px) var(--px) 0 0 var(--bevel-hi),
              inset calc(-1 * var(--px)) calc(-1 * var(--px)) 0 0 var(--bevel-lo);
@@ -606,7 +846,11 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .planbtn:focus-visible::before,
 .rm:focus-visible::before,
 .qty button:focus-visible::before{
-  box-shadow:inset 0 0 0 var(--px) var(--accent),
+  /* `--ring`, not `--px`. Lux drops the bevel to a 1px hairline, and a focus
+     ring is not ornament - a 1px ring is not a focus ring on a phone screen at
+     arm's length, and this app's design centre is elderly eyes. The ring keeps
+     its own width in both skins. */
+  box-shadow:inset 0 0 0 var(--ring,var(--px)) var(--accent),
              inset var(--px) var(--px) 0 0 var(--bevel-hi),
              inset calc(-1 * var(--px)) calc(-1 * var(--px)) 0 0 var(--bevel-lo);
 }
@@ -649,7 +893,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
    these rules have identical specificity, so source order decides, and the
    list would otherwise flatten the round and the small variants back into the
    default rectangle. */
-.qty button,.rm{--px:2px; -webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
+.qty button,.rm{--px:var(--px-sm,2px); -webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
 .qty button::before{-webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
 .fab{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
 .fab::before{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
@@ -658,6 +902,53 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
    the + button and Hide done stopped floating and scrolled off with the page.
    position:fixed already establishes a containing block, so it needs no help. */
 .fab,.fab2{position:fixed;}
+
+/* ========================= LUX: THE ORNAMENT ==========================
+   The second skin's surface, drawn through the SAME two-layer machinery the
+   pixel bevel already uses - a background that shows as the outline, and a
+   ::before inset by --px carrying the fill and two hard inset shadows. Nothing
+   below adds a rule to that structure; it only re-points the tokens it reads.
+
+   WHAT MAKES IT LUX, in order of how much of the effect it carries:
+     1. --gloss, a top-to-bottom gradient over the fill, with a hard step at the
+        midline. That step is what reads as a lit, slightly domed cap.
+     2. --px-base:1px, so the chunky 3px chamfer becomes a hairline.
+     3. --pxl-shape, a gentle radius instead of stepped corners.
+
+   NO BORDER, ANYWHERE. A 1px border adds 2px to a control's box, which the
+   Largest-text measurement put at 18px on an Edit sheet already 2.06 screens
+   tall and 116px of extra scroll on a 58-row list. The 1px here is INSIDE the
+   existing box - inset:var(--px) - so Lux cannot move a single pixel of layout
+   at any text size, and the "colour and ornament only" promise is literally
+   true rather than nearly true.
+
+   NO BLUR ON ANYTHING THAT SCROLLS. Two fixed floating buttons carry a
+   drop-shadow and always have; they composite once and never repaint under the
+   thumb. Everything below is hard-edged: every gradient stop, every shadow.
+   `filter`, `backdrop-filter` and blurred shadows on a row are refused in this
+   file already: the scroller carries roughly 348 clipped, isolated,
+   inset-shadowed elements, and blur is the one effect that turns that from
+   cheap into a repaint the parents' phones would feel on every tick. */
+html[data-skin="lux"]{
+  --px-base:1px;
+  --px-sm:1px;
+  --ring:3px;
+  --gloss:linear-gradient(180deg,
+    rgba(255,255,255,.20) 0%, rgba(255,255,255,.07) 49%,
+    rgba(0,0,0,.09) 50%, rgba(0,0,0,.17) 100%);
+  /* A radius, not a staircase. `inset()` keeps clip-path in play so the outline
+     layer and the focus ring below still work exactly as they do in Retro. */
+  --pxl-shape:inset(0 round 6px);
+  --pxl-shape-sm:inset(0 round 5px);
+  --pxl-shape-round:inset(0 round 50%);
+}
+html[data-skin="lux"][data-theme="light"]{
+  /* Paper wants the light from higher and the shade far weaker; the dark
+     recipe on a cream fill reads as dirt rather than as gloss. */
+  --gloss:linear-gradient(180deg,
+    rgba(255,255,255,.55) 0%, rgba(255,255,255,.16) 49%,
+    rgba(0,0,0,.04) 50%, rgba(0,0,0,.10) 100%);
+}
 
 /* Sits under the list, so it is the last thing on the page rather than
    something competing with it. Muted and small on purpose: a notice, not a
@@ -678,7 +969,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 .wel-step p{font-size:.8rem; color:var(--muted); line-height:1.5;}
 .wel-step ol.steps{margin:2px 0 0 18px; font-size:.8rem; line-height:1.7; color:var(--muted);}
 .wel-step ol.steps b{color:var(--ink);}
-.wel-step .ok-line{color:var(--got); font-weight:600; font-size:.82rem;}
+.wel-step .ok-line{color:var(--got-ink); font-weight:600; font-size:.82rem;}
 .wel-step .hint{margin-top:6px;}
 .wel-step button.wide{margin-top:4px;}
 /* The step sits on --panel2 and so, by default, would these - a button the same
@@ -755,7 +1046,8 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="fld"><label>Note (size, why, anything else)</label><input id="editNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
   <div class="fld"><label>Which stores? <span class="lbl-note">&mdash; tap every store you might get it at</span></label>
     <div class="seg" id="editStore"></div>
-    <div class="hint">It will show on each store's tab, but it is <b>one thing to buy</b> &mdash; tick it off anywhere and it is ticked everywhere.</div></div>
+    <div class="hint">It will show on each store's tab, but it is <b>one thing to buy</b> &mdash; tick it off anywhere and it is ticked everywhere.</div>
+    <div class="hint">Only the stores <b>this list</b> goes to. To use a different one, pick it in <b>Menu &rarr; My lists &rarr; Settings</b> &mdash; that changes the tabs for everybody.</div></div>
   <!-- PRICE LIVES HERE, not on the Add sheet. Adding happens at home; pricing
        happens in the aisle, and a fifth control on Add puts its button below
        the fold at the Largest text setting.
@@ -791,9 +1083,19 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <h2>Add an item</h2>
   <div class="fld"><label>What is it?</label><input id="addName" placeholder="e.g. paper towels" autocomplete="off" maxlength="120"></div>
   <div class="fld"><label>Note (size, why, anything else)</label><input id="addNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
+  <!-- SEVEN STORES EXIST; A LIST HOLDS FOUR. This picker shows the list's four
+       (or however many it has), not the whole pool, and that is on purpose
+       rather than an oversight: `shops` is a SHARED record, so widening it from
+       here would silently retab every phone on the list because somebody typed
+       in an item. Adding a store stays where adding a store belongs - list
+       settings, where the person doing it can see it is a change for everyone.
+       What was actually missing was anyone SAYING so on the way past, which is
+       the hint - and the hint has to say the blast radius too, or it points at
+       a door without mentioning that going through it moves everyone's tabs. -->
   <div class="fld"><label>Which stores? <span class="lbl-note">&mdash; tap every store you might get it at</span></label>
     <div class="seg" id="addStore"></div>
-    <div class="hint">It will show on each store's tab, but it is <b>one thing to buy</b> &mdash; tick it off anywhere and it is ticked everywhere.</div></div>
+    <div class="hint">It will show on each store's tab, but it is <b>one thing to buy</b> &mdash; tick it off anywhere and it is ticked everywhere.</div>
+    <div class="hint">Only the stores <b>this list</b> goes to. To use a different one, pick it in <b>Menu &rarr; My lists &rarr; Settings</b> &mdash; that changes the tabs for everybody.</div></div>
   <!-- OPTIONAL, BOTH OF THEM. Only the name and the stores are required; these
        two exist because the paste-a-list path could already set them and typing
        one in by hand could not. Leave them alone and you get one, unpriced,
@@ -916,7 +1218,8 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
        affects other people. -->
   <div class="warnbox" id="importWhere"></div>
   <div class="fld"><label>Which stores? <span class="lbl-note">&mdash; tap every store you might get them at</span></label>
-    <div class="seg" id="importStore"></div></div>
+    <div class="seg" id="importStore"></div>
+    <div class="hint">Only the stores <b>this list</b> goes to. To use a different one, pick it in <b>Menu &rarr; My lists &rarr; Settings</b> &mdash; that changes the tabs for everybody.</div></div>
   <div class="fld"><label>One item per line. Paste from anywhere.</label>
     <textarea id="importText" rows="3" placeholder="- 2 x milk&#10;bread $3.49&#10;[ ] eggs"></textarea>
     <!-- THE RULES LIVE HERE, NOT IN THE PLACEHOLDER. The placeholder was the
@@ -991,7 +1294,16 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
       <button type="button" data-theme-set="light">Light</button>
       <button type="button" data-theme-set="dark">Dark</button>
     </div>
-    <div class="hint">Auto follows your phone&rsquo;s own light/dark setting.</div></div>
+    <div class="hint">Auto follows your phone&rsquo;s own light/dark setting.</div>
+    <!-- The skin, one row under the theme, because they are the same kind of
+         choice: a look, applied the instant you tap, kept on this phone only. -->
+    <div class="seg" id="skinSeg" style="margin-top:8px">
+      <button type="button" data-skin-set="retro">Retro</button>
+      <button type="button" data-skin-set="lux">Lux</button>
+    </div>
+    <div class="hint">Two looks. <b>Retro</b> is the chunky one, <b>Lux</b> is the
+      smoother one in green and gold. Either works in light or dark. This is
+      your phone only &mdash; nobody else&rsquo;s changes.</div></div>
   <div class="fld"><button class="wide danger" id="menuForget">⌫ Forget this device</button></div>
   <div class="hint">Add to Home Screen for an app icon — iPhone: Share → Add to Home Screen. Android: ⋮ → Add to Home screen.</div>
   <div class="hint legal-menu">&copy; 2026 Air Capital Analytics LLC. All rights reserved.<br>
@@ -1036,18 +1348,31 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
        somebody who never opens the menu would never learn it exists - which is
        the whole problem with putting a comfort setting behind a button. These
        carry the same data-theme-set attribute as the pair in the menu, so both
-       sets wire themselves and stay in step with no extra JavaScript. -->
+       sets wire themselves and stay in step with no extra JavaScript.
+
+       KEPT SHORT DELIBERATELY. This sheet was already about two screens tall at
+       the Largest text size before v33 added a third control to this step, and
+       a step that is taller than the screen leaves a first-timer scrolling with
+       no step boundary in sight and no idea the "Got it" button exists. The
+       copy here says what a tap does and where the settings live afterwards,
+       and stops. Text size is NOT in the menu - it is the button at the top of
+       the screen - so this no longer claims it is. -->
   <div class="wel-step">
-    <b>4 &middot; Make it easy to read</b>
+    <b>4 &middot; Make it easy on your eyes</b>
     <div class="seg">
       <button type="button" data-theme-set="auto">Auto</button>
       <button type="button" data-theme-set="light">Light</button>
       <button type="button" data-theme-set="dark">Dark</button>
     </div>
-    <p><b>Auto</b> follows whatever your phone already does. Tap <b>Light</b> or
-      <b>Dark</b> to try them &mdash; the screen changes as you tap.</p>
-    <p>If the writing is too small, tap <b>Text size</b> at the top of the
-      screen. Both of these live under <b>Menu &rarr; Appearance</b> later.</p>
+    <div class="seg">
+      <button type="button" data-skin-set="retro">Retro</button>
+      <button type="button" data-skin-set="lux">Lux</button>
+    </div>
+    <p>Tap any of these to try it &mdash; the screen changes as you tap, and
+      nothing is saved anywhere but this phone. <b>Auto</b> follows whatever
+      your phone already does.</p>
+    <p>Too small to read? Tap <b>Text size</b> at the top of the screen. Light,
+      dark and the two looks are under <b>Menu &rarr; Appearance</b> later.</p>
   </div>
 
   <button class="wide primary" id="welcomeGo">Got it &mdash; let&rsquo;s go</button>

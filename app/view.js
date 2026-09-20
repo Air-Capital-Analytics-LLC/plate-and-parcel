@@ -131,6 +131,27 @@ export function shopsFor(state) {
 
 const FROZEN_RE = /\s*[—-]\s*MUST BE FROZEN/i;
 
+/*
+ * The three status marks, as HTML entities rather than literal glyphs. That
+ * buys ONE thing and it is worth being precise about which: it survives a
+ * mis-declared charset, an editor that re-encodes on save, and a copy-paste
+ * through a tool that does not speak Unicode. It does NOT buy font coverage -
+ * a glyph the font lacks is a box whether it arrived as an entity or as bytes.
+ *
+ * Coverage is a separate question and was checked separately: all three live in
+ * Basic Latin punctuation (U+2713, U+2715) and the Arrows block (U+21C4), which
+ * Roboto, Noto and the iOS system fonts all carry in full. Arrows is the one
+ * worth naming, because Swap is the status with no other cue - it is not dimmed
+ * and not struck through - so if its mark ever boxed, Swap would lose the most.
+ *
+ * CHOSEN FOR SHAPE, NOT FOR MEANING. They have to be told apart at a glance by
+ * someone who sees all three as the same colour, so they differ in the
+ * direction their strokes run: one leans, one is level, one crosses. The
+ * arrows are U+21C4 rather than a two-headed arrow because a swap is a trade,
+ * not a range.
+ */
+const MARK = { got: '&#10003;', swap: '&#8644;', skip: '&#10005;' };
+
 export function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -637,13 +658,24 @@ export function itemHTML(item, state, opts = {}) {
       + `${on ? 'On this trip' : 'Add to trip'}</button></div>`;
   }
 
+  // The status mark, repeated on the row. Colour alone cannot carry Got from
+  // Swap from Skip - even after v33 re-cut all four palettes the closest pair
+  // under deuteranopia is still under 2:1, which `tests/v33_probe.mjs` measures
+  // and prints - so the shape says it too. aria-hidden because the button below
+  // already announces the state through aria-pressed, and a screen reader
+  // reading "check Chicken thighs check Got" is worse than silence.
+  const rowMark = st
+    ? `<span class="mk mk-${st}" aria-hidden="true">${MARK[st]}</span>`
+    : '';
+
   return `<div class="item${item.custom ? ' cust' : ''}${st ? ' ' + st : ''}${flagged ? ' flagged' : ''}" data-id="${esc(item.id)}">`
-    + `<div class="nm">${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${priceTag}${whoTag}${stepper}${removeBtn}</div>`
+    + `<div class="nm">${rowMark}<span class="nmt">${esc(text)}</span>`
+    + `${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${priceTag}${whoTag}${stepper}${removeBtn}</div>`
     + body + flagRow
     + `<div class="acts" role="group" aria-label="${esc(text)}">`
-    + `<button class="pxl ${st === 'got' ? 'on-got' : ''}" data-act="got" aria-pressed="${st === 'got'}">Got</button>`
-    + `<button class="pxl ${st === 'swap' ? 'on-swap' : ''}" data-act="swap" aria-pressed="${st === 'swap'}">Swap</button>`
-    + `<button class="pxl ${st === 'skip' ? 'on-skip' : ''}" data-act="skip" aria-pressed="${st === 'skip'}">Skip</button>`
+    + `<button class="pxl ${st === 'got' ? 'on-got' : ''}" data-act="got" aria-pressed="${st === 'got'}"><span class="mk" aria-hidden="true">${MARK.got}</span> Got</button>`
+    + `<button class="pxl ${st === 'swap' ? 'on-swap' : ''}" data-act="swap" aria-pressed="${st === 'swap'}"><span class="mk" aria-hidden="true">${MARK.swap}</span> Swap</button>`
+    + `<button class="pxl ${st === 'skip' ? 'on-skip' : ''}" data-act="skip" aria-pressed="${st === 'skip'}"><span class="mk" aria-hidden="true">${MARK.skip}</span> Skip</button>`
     + `</div>${noteRow}</div>`;
 }
 

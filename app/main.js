@@ -1250,7 +1250,68 @@ async function shareThisList() {
  */
 const THEME_KEY = 'pnp.theme';
 const THEMES = ['auto', 'light', 'dark'];
-const THEME_COLOR = { light: '#f2f4f8', dark: '#12141c' };
+/* Keyed skin-then-theme since v33. The same table is inlined in index.html's
+ * pre-paint script, which cannot import this one and still beat the first
+ * paint; if a ground colour changes, both copies move together. */
+const THEME_COLOR = {
+  retro: { light: '#f2f4f8', dark: '#12141c' },
+  lux: { light: '#f5f1e8', dark: '#0f1411' }
+};
+
+/*
+ * THE SKIN. A second axis beside the theme, and deliberately a separate key
+ * rather than four combined values in one: somebody who picks Lux and then
+ * turns their phone to dark at sunset should get dark Lux, not be dropped back
+ * to whatever pair a combined value happened to name.
+ *
+ * Retro is the default and is expressed by the ABSENCE of the attribute, not
+ * by `data-skin="retro"`. Every rule in the stylesheet is written for Retro and
+ * Lux overrides on top, so an absent attribute is the correct fallback for a
+ * phone running an older cached index.html - it lands on the skin that copy
+ * already knows how to draw instead of on an unstyled half-Lux.
+ */
+const SKIN_KEY = 'pnp.skin';
+const SKINS = ['retro', 'lux'];
+
+function readSkin() {
+  try {
+    const v = localStorage.getItem(SKIN_KEY);
+    return SKINS.includes(v) ? v : 'retro';
+  } catch { return 'retro'; }
+}
+
+/*
+ * THE CHOICE IS PASSED IN, NOT RE-READ. `setSkin` wrote to localStorage inside
+ * a try/catch and then called this, which called `readSkin`, which read from
+ * the same localStorage - so in any context where storage THROWS rather than
+ * merely forgetting (Safari Private Browsing, blocked site data, an iOS
+ * storage-pressure eviction) the write was swallowed, the read fell back to
+ * 'retro', and tapping Lux did nothing at all: no repaint, no highlight, no
+ * message. That is the one thing §1 says never to do. Taking the value as an
+ * argument means the tap always applies for this load even when it cannot be
+ * remembered for the next one. `setTheme` had the identical latent bug and is
+ * fixed the same way.
+ */
+function applySkin(choice) {
+  const skin = SKINS.includes(choice) ? choice : readSkin();
+  const root = document.documentElement;
+  if (skin === 'lux') root.setAttribute('data-skin', 'lux');
+  else root.removeAttribute('data-skin');
+  for (const b of document.querySelectorAll('[data-skin-set]')) {
+    b.classList.toggle('on', b.dataset.skinSet === skin);
+  }
+  // The skin moves the ground colour, so the browser chrome has to follow it as
+  // well as the theme. applyTheme owns that meta tag; let it do the writing
+  // rather than keeping a second opinion about it here - but hand it the skin
+  // just resolved, or it re-reads storage and loses the tap all over again.
+  applyTheme(undefined, skin);
+}
+
+function setSkin(v) {
+  if (!SKINS.includes(v)) return;
+  try { localStorage.setItem(SKIN_KEY, v); } catch { /* private mode: this load only */ }
+  applySkin(v);
+}
 
 function readTheme() {
   try {
@@ -1263,12 +1324,13 @@ function prefersLight() {
   return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
 }
 
-function applyTheme() {
-  const choice = readTheme();
+function applyTheme(want, wantSkin) {
+  const choice = THEMES.includes(want) ? want : readTheme();
   const resolved = choice === 'auto' ? (prefersLight() ? 'light' : 'dark') : choice;
+  const skin = SKINS.includes(wantSkin) ? wantSkin : readSkin();
   document.documentElement.setAttribute('data-theme', resolved);
   const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.setAttribute('content', THEME_COLOR[resolved]);
+  if (meta) meta.setAttribute('content', THEME_COLOR[skin][resolved]);
   for (const b of document.querySelectorAll('[data-theme-set]')) {
     b.classList.toggle('on', b.dataset.themeSet === choice);
   }
@@ -1277,7 +1339,7 @@ function applyTheme() {
 function setTheme(v) {
   if (!THEMES.includes(v)) return;
   try { localStorage.setItem(THEME_KEY, v); } catch { /* private mode: this load only */ }
-  applyTheme();
+  applyTheme(v);
 }
 
 /**
@@ -2068,6 +2130,9 @@ function wireEvents() {
   for (const b of document.querySelectorAll('[data-theme-set]')) {
     b.onclick = () => setTheme(b.dataset.themeSet);
   }
+  for (const b of document.querySelectorAll('[data-skin-set]')) {
+    b.onclick = () => setSkin(b.dataset.skinSet);
+  }
   $('newListGo').onclick = createList;
   // Delegated: the chips are rebuilt on every toggle, so per-button handlers
   // would be re-bound constantly and leak the stale ones.
@@ -2515,7 +2580,7 @@ function applyParkedShops() {
 
 async function boot() {
   applyTextSize();
-  applyTheme();
+  applySkin();  // calls applyTheme(), which needs the skin resolved first
   watchSystemTheme();
   showVersion();
   wireEvents();
