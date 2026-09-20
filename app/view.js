@@ -186,6 +186,37 @@ export function findItem(state, id) {
   return null;
 }
 
+/**
+ * The clock value this list was emptied at, or 0.
+ *
+ * Read defensively rather than trusted: this arrives from a world-writable node
+ * like everything else, and it is the one value that can hide the entire list.
+ * `isWellFormed` is the real gate; this is the render path refusing to throw or
+ * to blank the list on a value that got past it (§4 - one unreadable record
+ * must never blank the list).
+ */
+export function sweptAt(state) {
+  const v = state?.sweep?.all?.at;
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/**
+ * Is this row hidden by an "Empty this list for everyone"?
+ *
+ * The rule is one line and it is the whole feature: a row is emptied away when
+ * the sweep is NEWER than the row's own last word about itself. A catalogue row
+ * with no record has never said anything, so its last word is 0 and the sweep
+ * always wins. Anything added, edited or re-added AFTER the sweep carries a
+ * later `t` and survives automatically - no special case, no second marker, and
+ * no record written against any row, which is what keeps `data.js` the source
+ * of every catalogue name (§4: `data.js` is generated, never hand-edited).
+ */
+function sweptOut(state, id, at) {
+  if (!at) return false;
+  const rec = (state.added || {})[id];
+  return at > (rec?.t || 0);
+}
+
 export function buildGroups(state, storeId) {
   // Never index blind. A corrupt `ui.store` reaching here threw on every paint,
   // which the renderer's catch then turned into a permanent error card offering
@@ -200,6 +231,7 @@ export function buildGroups(state, storeId) {
   const added = state.added || {};
   const out = [];
   const baseIds = new Set();
+  const at = sweptAt(state);
 
   // The catalogue is the starting point, not the contents. A record in `added`
   // keyed by a catalogue id sits in front of that row FOR THIS LIST: renaming
@@ -211,6 +243,7 @@ export function buildGroups(state, storeId) {
       baseIds.add(it.id);
       const o = added[it.id];
       if (o && o.del) continue;                       // removed from this list
+      if (sweptOut(state, it.id, at)) continue;       // emptied for everyone
       if (o && o.store !== storeId) continue;         // moved to another shop
       items.push(o
         ? { ...it, name: o.name, detail: o.note || it.detail, edited: true, editable: true }
@@ -224,6 +257,7 @@ export function buildGroups(state, storeId) {
   for (const id of Object.keys(added)) {
     const a = added[id];
     if (!a || a.del || a.store !== storeId) continue;
+    if (sweptOut(state, id, at)) continue;            // emptied for everyone
     if (baseIds.has(id)) continue;                    // already shown above
     mine.push({ id, name: a.name, detail: a.note || '', mine: !a.cat, edited: !!a.cat, editable: true, by: a.by });
   }
@@ -407,7 +441,16 @@ export function listHTML(state, opts = {}) {
       html = `<div class="empty">Nothing to plan for this store.</div>`;
     } else {
       const c = counts(state, storeId);
-      html = c.total === 0
+      // AN EMPTIED LIST SAYS SO, and says how to undo it. This is the screen
+      // all four phones render, so it is the only thing the OTHER three ever
+      // see: without it a sweep arriving over the wire takes 58 rows away with
+      // no toast, no banner and no explanation, and the generic message below
+      // points at the wrong remedy - "Tap + to add something" reads as "type it
+      // all in again" to the person who did not tap Empty. §1, the list is
+      // never silently smaller, read from the receiving end.
+      html = c.total === 0 && sweptAt(state)
+        ? `<div class="empty">This list was emptied for everyone.<br><br>Tap <b>&#8943;</b> then <b>Put back items that were taken off</b> to bring it all back.</div>`
+        : c.total === 0
         ? (anyPlanned(state)
           ? `<div class="empty">Nothing from this store is on this trip.<br><br>Tap <b>Plan</b> to add things, or <b>+</b> for a one-off.</div>`
           : (useCatalogue

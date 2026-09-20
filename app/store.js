@@ -58,7 +58,11 @@ export const TEXT_SIZES = ['Normal', 'Large', 'Largest'];
  * `ui`, `me` and `outbox` are reserved names in the persisted blob: `load()`
  * and `snapshot()` both iterate this array against that same object.
  */
-export const KINDS = ['items', 'added', 'plan', 'flags', 'qty', 'shops'];
+// LAST on purpose, twice over. This array is the drain priority order, and a
+// list-wide setting must never displace a tick on a flapping link (the same
+// argument that put `shops` at the end in v27). It is also one record for the
+// whole list, so it is the cheapest thing here to send last.
+export const KINDS = ['items', 'added', 'plan', 'flags', 'qty', 'shops', 'sweep'];
 
 /**
  * The shops a list can choose from.
@@ -202,6 +206,25 @@ export function isWellFormed(rec, kind) {
     if (typeof rec.name !== 'string') return false;
     if (!isStr(rec.note) || !isStr(rec.store) || !isStr(rec.by)) return false;
     if (rec.del !== undefined && typeof rec.del !== 'boolean') return false;
+    // `cat` is a MARKER, not payload, and it decides whether a hidden row is
+    // allowed back and whether `prune` may ever collect it - so it is gated
+    // here with everything else arriving from a world-writable node (§4).
+    //
+    // It had never been checked at all. A record carrying `cat:{}` is truthy at
+    // every site that reads it, so a hostile record could make a permanently
+    // removed hand-typed item restorable, or - via `prune`'s `!r.cat` - make
+    // its own tombstone immortal, which is a flood the 30-day TTL can no longer
+    // heal. Gated to the literal 0/1 it has always been written as rather than
+    // to "any finite number": the contract in this comment and the check below
+    // should be the same sentence. Verified against the whole git history of
+    // this file - `cat` has only ever been written as `1`, so no existing
+    // record on any phone is dropped by this.
+    if (rec.cat !== undefined && rec.cat !== 0 && rec.cat !== 1) return false;
+  } else if (kind === 'sweep') {
+    // One record per list, id `all`, holding the logical-clock value the list
+    // was emptied at. `0` means "not emptied" - the undo is a VALUE, not an
+    // absence, because the rules refuse deletes and an absence cannot merge.
+    if (typeof rec.at !== 'number' || !Number.isFinite(rec.at) || rec.at < 0) return false;
   } else {
     // An UNKNOWN kind fails, totally and obviously, rather than falling through
     // to whatever the last branch happened to check. This used to be a bare
@@ -236,6 +259,7 @@ export function createStore({ ns = 'household' } = {}) {
     qty:   Object.create(null),   // itemId -> {q, t, c}        how many (1 = unset)
     flags: Object.create(null),   // "<itemId>@<store>" -> {f, by, t, c}  not stocked here
     shops: Object.create(null),   // shopId -> {on, label, t, c}  which shops this list uses
+    sweep: Object.create(null),   // "all" -> {at, t, c}        emptied at this clock value (0 = not)
     outbox: Object.create(null),  // "<kind>:<id>" -> kind      durable dirty set
     ui: { store: 'sams', hideDone: false, text: 0 },
     me: { id: '', name: '' },
@@ -278,6 +302,12 @@ export function createStore({ ns = 'household' } = {}) {
             // phone re-uploads an immortal phantom forever. The two gates must
             // not drift, which is the argument `CLIENT_ID` already won above.
             if (kind === 'shops' && !SHOP_IDS.includes(id)) continue;
+            // Same argument, one legal id. `sweep` is one record per list and
+            // nothing prunes it, so a stray `sweep:zzz` would be armed by
+            // `requeueAll`, counted on the badge and re-uploaded forever - a
+            // permanent "1 waiting" that no tap can clear, which is a badge
+            // that lies (§1, the badge is not decoration).
+            if (kind === 'sweep' && id !== 'all') continue;
             if (isWellFormed(rec, kind)) state[kind][id] = rec;
             // Keep the author with the key. The count below has to ask "was
             // this OUR work", and by then the record is gone — and `state.me`
@@ -607,6 +637,12 @@ export function createStore({ ns = 'household' } = {}) {
    * taking a row off the list would be one-way with nothing on screen to undo
    * it. Renames are left alone: this restores what is SHOWN, not what things
    * are called.
+   *
+   * ONLY `cat` ROWS, still, and deliberately. A hand-typed item removed one at
+   * a time is permanent because that is exactly what its confirm says: "It goes
+   * for everybody, on every phone." Emptying the list is a different operation
+   * and does NOT come through here - see `emptyList`, which hides rows without
+   * writing a record against any of them, and `unemptyList`, which undoes it.
    */
   function restoreHidden() {
     let n = 0;
@@ -625,6 +661,97 @@ export function createStore({ ns = 'household' } = {}) {
     let n = 0;
     for (const r of Object.values(state.added)) if (r && r.cat && r.del) n++;
     return n;
+  }
+
+  /* ---- empty the list for everyone: the shared half of "delete a list" ---- */
+
+  /**
+   * ONE RECORD SAYS THE WHOLE LIST IS EMPTIED, and nothing is written against
+   * the rows themselves.
+   *
+   * A WHOLE-NODE DELETE IS NOT REPRESENTABLE HERE, and four independent cold
+   * passes killed it separately. `firebase-rules.json` scopes every `.write` to
+   * a leaf and requires `newData.exists()`, so the database answers 401 to a
+   * delete at any depth; if the rules were loosened, `onEmptySnapshot` ->
+   * `requeueAll()` on three other phones puts the list straight back; and the
+   * wipe would take `meta.salt` with it, which is §4's salt receipt on purpose.
+   * Real deletion stays a Firebase-console operation, and
+   * `docs/privacy-and-threat-model.md` names that asymmetry as intended.
+   *
+   * WHY NOT A TOMBSTONE PER ROW, which is what this was first built as and what
+   * the roadmap planned. Measured on the household list, that shape wrote 79
+   * new records, 20,724 sealed bytes, and took the root snapshot every phone
+   * re-downloads on every reconnect from 10.9 KiB to 31.2 KiB - a permanent
+   * +186% against §0's receipt of ~21 KB per snapshot and 17 MB per trip. It
+   * also put 32% of the Fetch spec's 64 KiB `keepalive` body cap into a single
+   * all-or-nothing PATCH, on the path `requeueAll` uses to recover from an
+   * empty snapshot. And worst, writing a first record against a catalogue row
+   * PINS it: the sweep created that record from whichever tab it saw
+   * first, so 44 of the 58 Costco rows came back under Sam's and vanished from
+   * Costco for good, while the confirm promised a lossless round trip.
+   *
+   * A marker has none of that. It is ~100 bytes, it creates no per-row records,
+   * so nothing can be pinned and `data.js` stays the source of every name; it
+   * merges as a plain LWW register (commutative, associative, idempotent); and
+   * it drains through the normal outbox, so it works with no signal - which
+   * matters, because the person tapping it may be standing in the shop that
+   * just went wrong.
+   *
+   * `at` IS A LOGICAL CLOCK VALUE, not a wall clock. A row is hidden when the
+   * sweep is newer than the row's own last word about itself, so anything
+   * re-added or edited AFTER the sweep survives it automatically, with no
+   * special case. `at: 0` means "not emptied" and is how the undo is written -
+   * a value, not an absence, so it merges like everything else instead of
+   * needing a delete the rules would refuse.
+   */
+  function emptyList() {
+    const at = tick();
+    state.sweep.all = stamp({ at });
+    state.outbox[obKey('sweep', 'all')] = 'sweep';
+    persist();
+    emit({ type: 'bulk' });
+    return at;
+  }
+
+  /**
+   * Undo it. `at: 0` rather than removing the record - see above.
+   *
+   * THE UNDO MUST OUTRANK WHAT IT IS UNDOING, and `tick()` alone does not
+   * guarantee that. `observeClock` refuses to raise the local clock past
+   * `Date.now() + 24h` - deliberately, so one phone with a wrong date cannot
+   * poison everybody's ordering - which means a sweep stamped FURTHER ahead
+   * than that can never be outranked by an honest `tick()`. The list then
+   * empties, the undo appears to work, and the next snapshot or peer re-merge
+   * blanks it again, forever, with no way back inside the app.
+   *
+   * Reachable without an attacker: one family phone two days fast. Reachable
+   * with one: the node is world-writable and §4 says a record from it is
+   * untrusted. Measured by the v29 verifier at `at: 1e15`, `t: now+25h` - all
+   * four phones blank, undo rejected by its own peers, recovery only from the
+   * Firebase console.
+   *
+   * So the undo is stamped one tick above the record it is cancelling. This
+   * stays inside LWW (it is still a plain `t` comparison, still commutative and
+   * idempotent) and it does NOT touch the shared clock, so nothing is poisoned:
+   * the high `t` lives on this one record and `observeClock` still refuses to
+   * learn from it on the way back in. Clamping `at` in `isWellFormed` was the
+   * alternative and is worse - it would judge a record by the RECEIVING
+   * device's clock, which is the thing `isWellFormed` explicitly refuses to do.
+   */
+  function unemptyList() {
+    if (!sweptAt()) return false;
+    const beat = Math.max(tick(), (state.sweep.all?.t || 0) + 1);
+    state.sweep.all = { at: 0, t: beat, c: state.me.id };
+    state.outbox[obKey('sweep', 'all')] = 'sweep';
+    persist();
+    emit({ type: 'bulk' });
+    return true;
+  }
+
+  /** The clock value this list was emptied at, or 0 if it was not. */
+  function sweptAt() {
+    const v = state.sweep.all?.at;
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
   }
 
   /**
@@ -848,6 +975,7 @@ export function createStore({ ns = 'household' } = {}) {
         // against the pool), but §1 says the badge is not decoration, and a
         // badge that counts an immortal phantom is a badge that lies.
         if (kind === 'shops' && !SHOP_IDS.includes(id)) continue;
+        if (kind === 'sweep' && id !== 'all') continue;   // one legal id, same argument
         observeClock(rec.t);
         const cur = into[id];
         if (!wins(rec, cur)) continue;
@@ -1028,7 +1156,8 @@ export function createStore({ ns = 'household' } = {}) {
 
   return {
     state, subscribe, emit,
-    setStatus, addItem, editAdded, upsertAdded, removeAdded, restoreHidden, hiddenCount, clearAllMarks, setUI, setName,
+    setStatus, addItem, editAdded, upsertAdded, removeAdded, restoreHidden, hiddenCount,
+    emptyList, unemptyList, sweptAt, clearAllMarks, setUI, setName,
     hasPlan, isPlanned, setPlanned, clearPlan, replanFromLastTrip,
     getQty, setQty, bumpQty,
     isFlagged, flagInfo, setFlag, setShop, parseList, importItems,

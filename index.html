@@ -345,6 +345,24 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .sheet label{font-size:.75rem; color:var(--muted); display:block; margin-bottom:4px;}
 .sheet .row{display:flex; gap:8px;}
 .sheet .row button{flex:1; padding:13px; font-weight:600;}
+/* The body of the app's own "are you sure" (LEDGER M22). In REM on purpose:
+   this is the text the OS dialog used to draw at the system size, ignoring the
+   Text size control entirely - so the sentences that decide whether somebody
+   wipes a shared list were the only ones in the app that could not be made
+   bigger. `pre-line` keeps the blank line between paragraphs that the old
+   messages already carried, without the body ever being built as HTML: two of
+   these interpolate an item NAME, and a name arrives over the wire from a
+   world-writable node (§4), so it goes in through textContent. */
+.askbody{font-size:.95rem; line-height:1.55; white-space:pre-line; color:var(--ink);}
+.askbody b{color:var(--accent-ink);}
+/* On a destructive question the FILLED button is Cancel, not Yes - `ask()`
+   moves `.primary` across. The app already says danger in red text on an
+   ordinary face (`menuForget`), and that convention is kept rather than
+   inventing a red filled button: these faces are drawn by a `::before` using
+   `--fill`, so a `background` override here would have done nothing at all and
+   looked correct in the stylesheet. Filling the safe answer also means the
+   biggest, brightest target is the one that changes nothing. */
+.sheet .row button.danger{font-weight:700;}
 /* The reveal button sits UNDER the box rather than floating inside it. An
    overlay inside the field puts a tap target on top of the one input that
    gates the whole app, and a mis-tap there dismisses the keyboard mid-
@@ -821,9 +839,25 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="fld"><button class="wide" id="menuImport">📥 Paste a list to add</button></div>
   <div class="fld"><button class="wide" id="menuInstall">📲 Add to my home screen</button></div>
   <div class="fld"><button class="wide" id="menuLists">🗂️ My lists / start a new one</button></div>
-  <div class="fld"><button class="wide" id="menuRestore">&#8635; Put back items I took off this list</button></div>
-  <div class="fld"><button class="wide" id="menuClearPlan">↩ Put everything back on the list</button></div>
-  <div class="fld"><button class="wide" id="menuClear">↺ Start a new trip (clears everyone's ticks)</button></div>
+  <!-- GROUPED AND RE-WORDED 2026-09-20. These three were adjacent, all three
+       opened with "Put ... back ... list", and not one of them named the thing
+       it acted on. Aaron could not tell them apart on his own app. The first
+       two are the pair that actually collided: one restores ITEMS somebody
+       removed, the other undoes the TRIP SHORTLIST - completely different
+       objects, near-identical labels. Each now says what it touches, and the
+       hint says who else sees it (§3: say when something affects other people). -->
+  <div class="fld"><label>Items someone removed</label>
+    <button class="wide" id="menuRestore">&#8635; Put back items that were taken off</button>
+    <div class="hint">Undoes &ldquo;Empty this list for everyone&rdquo;, and brings back anything taken off with &ldquo;Take off this list&rdquo;. Everyone&rsquo;s phone gets it back.</div></div>
+  <div class="fld"><label>This trip</label>
+    <button class="wide" id="menuClearPlan">&#8617; Show the whole list again</button>
+    <div class="hint">Undoes &ldquo;Choose what to buy&rdquo;, so every item is back on show. Nothing is deleted either way.</div></div>
+  <div class="fld">
+    <button class="wide" id="menuClear">&#8634; Start a new trip</button>
+    <div class="hint">Clears everyone&rsquo;s ticks, then starts the next trip with whatever was bought, swapped or missing on this one.</div></div>
+  <div class="fld"><label>Clearing the whole list</label>
+    <button class="wide danger" id="menuEmpty">&#9003; Empty this list for everyone</button>
+    <div class="hint">Takes <b>everything</b> off this list, on everyone&rsquo;s phone. Nothing is deleted &mdash; the button above brings all of it back.</div></div>
   <div class="fld"><label>Appearance</label>
     <div class="seg" id="themeSeg">
       <button type="button" data-theme-set="auto">Auto</button>
@@ -892,6 +926,28 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <button class="wide primary" id="welcomeGo">Got it &mdash; let&rsquo;s go</button>
   <div class="hint">You can read this again whenever you like:
     <b>Menu</b> &rarr; <b>Welcome</b>.</div>
+</div></div>
+
+<!-- LAST sheet in the document, after even the welcome sheet. Sheets stack in
+     DOM order, and a question has to sit on top of whatever raised it - every
+     one of these is asked from inside another sheet (the menu, the edit sheet,
+     My lists), so anywhere earlier and the question would open BEHIND the thing
+     that asked it.
+
+     This replaces window.confirm() everywhere; LEDGER M22. An OS dialog draws
+     at the system text size and cannot be reached by the Text size control, so
+     until now the six sentences that decide whether somebody clears a shared
+     list were the only text in the app that could not be enlarged - in an app
+     whose whole reason for having that control is that it is read by eyes that
+     need it. v24 made every button scale and these stayed exactly where they
+     were. -->
+<div class="sheet-bg" id="askSheet"><div class="sheet">
+  <h2 id="askTitle"></h2>
+  <div class="askbody" id="askBody"></div>
+  <div class="row" style="margin-top:16px">
+    <button id="askNo">Cancel</button>
+    <button id="askYes">Yes</button>
+  </div>
 </div></div>
 
 <div id="toast"></div>

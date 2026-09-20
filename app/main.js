@@ -353,6 +353,94 @@ function setSyncBadge(status, detail) {
 function openSheet(id) { $(id).classList.add('open'); }
 function closeSheet(id) { $(id).classList.remove('open'); }
 
+/**
+ * The app's own "are you sure", in place of `window.confirm` - LEDGER M22.
+ *
+ * WHY IT EXISTS. An OS dialog is drawn by the system, at the system's text
+ * size, and the Text size control cannot reach it. So the six sentences that
+ * decide whether somebody clears a shared list were the only text in the app
+ * that could not be made bigger - in an app that carries that control because
+ * two of its four users need it, and which put it in the header rather than
+ * buried in settings for the same reason. v24 made every button scale and
+ * these stayed exactly where they were.
+ *
+ * RESOLVES ON EVERY PATH. Yes gives true; Cancel, the backdrop and Escape all
+ * give false. None of them may simply hide the sheet: a sheet that closes while
+ * its promise stays pending is the defect the passphrase gate shipped once,
+ * where the list looked perfectly healthy and the caller never ran again. That
+ * is why the backdrop is handled here as well as by the global handler.
+ *
+ * The body goes in through `textContent`, never `innerHTML`. Two callers
+ * interpolate an item name, and an item name arrives over the wire from a
+ * world-writable node, so it is untrusted input (§4).
+ *
+ * TEXT IN, exactly as `confirm` took it, and the first paragraph becomes the
+ * heading. Every one of these messages was already written as a question, a
+ * blank line, then the consequences - so the split costs nothing and gives the
+ * question the one piece of typography that survives being read at arm's
+ * length by someone who has already turned the text up.
+ */
+let asking = false;
+function ask(text, { yes = 'Yes', no = 'Cancel', danger = false } = {}) {
+  const cut = String(text).indexOf('\n\n');
+  const title = cut > 0 ? String(text).slice(0, cut) : 'Are you sure?';
+  const body = cut > 0 ? String(text).slice(cut + 2) : String(text);
+  // One question at a time. Without this a second `ask` would open over the
+  // first while the first's listeners were still live, and one tap would answer
+  // both - including answering a destructive question the user never read.
+  if (asking) { toast('One question at a time'); return Promise.resolve(false); }
+
+  // THE LATCH IS SET AFTER EVERY LOOKUP AND EVERY WRITE, not before. Set
+  // earlier, a single missing element would throw past the `asking = false` in
+  // `finish` and leave the latch stuck true for the life of the page - after
+  // which EVERY destructive confirm in the app silently returns false and all
+  // of those buttons quietly do nothing. That is §1's worst case reached
+  // through a typo. The first verifier pass caught this comment sitting one
+  // line ahead of its own code; the two must say the same thing.
+  const bg = $('askSheet');
+  const yesBtn = $('askYes');
+  const noBtn = $('askNo');
+  const titleEl = $('askTitle');
+  const bodyEl = $('askBody');
+  titleEl.textContent = title;
+  bodyEl.textContent = body;
+  yesBtn.textContent = yes;
+  noBtn.textContent = no;
+  asking = true;
+  // The FILLED button is whichever answer is safe. On a destructive question
+  // that is Cancel - so the biggest, brightest target is the one that changes
+  // nothing, and the destructive answer is the red-text one the app already
+  // uses for "Forget this device". Everywhere else Yes is filled, which is the
+  // ordinary sheet convention.
+  yesBtn.classList.toggle('danger', !!danger);
+  yesBtn.classList.toggle('primary', !danger);
+  noBtn.classList.toggle('primary', !!danger);
+
+  openSheet('askSheet');
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      asking = false;
+      yesBtn.removeEventListener('click', onYes);
+      noBtn.removeEventListener('click', onNo);
+      bg.removeEventListener('click', onBg);
+      document.removeEventListener('keydown', onKey);
+      closeSheet('askSheet');
+      resolve(v);
+    };
+    const onYes = () => finish(true);
+    const onNo = () => finish(false);
+    const onBg = (e) => { if (e.target === bg) finish(false); };
+    const onKey = (e) => { if (e.key === 'Escape') finish(false); };
+    yesBtn.addEventListener('click', onYes);
+    noBtn.addEventListener('click', onNo);
+    bg.addEventListener('click', onBg);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
 function toast(msg) {
   const t = $('toast');
   t.textContent = msg;
@@ -481,14 +569,17 @@ function saveEdit() {
   sync?.drain();
 }
 
-function deleteEdited() {
+async function deleteEdited() {
   const row = View.findItem(store.state, editId);
   if (!row) { closeSheet('editSheet'); return; }
   const msg = editCat
-    ? `Take \u201c${row.name}\u201d off this list?\n\nIt stays in the reference catalogue and on every other list. `
-      + `You can put it back from the menu.`
-    : `Remove \u201c${row.name}\u201d from the list?\n\nIt goes for everybody, on every phone.`;
-  if (!confirm(msg)) return;
+    // "the reference catalogue" was developer language that survived a rewrite -
+    // no parent knows what that is. And "only you typed this one in" was simply
+    // false: any of the four can edit any added row, so it misattributed the
+    // item and read as a small rebuke besides (\u00a73: never blame the user).
+    ? `Take \u201c${row.name}\u201d off this list?\n\nIt stays on your other lists, and on the master list this one was built from. \u201cPut back items that were taken off\u201d in the menu brings it back.`
+    : `Remove \u201c${row.name}\u201d from the list?\n\nIt goes for everybody, on every phone, and the menu will NOT bring this one back. Somebody would have to type it in again.`;
+  if (!await ask(msg, { yes: editCat ? 'Take it off' : 'Remove it', danger: !editCat })) return;
   store.removeAdded(editId, { cat: editCat, name: row.name, store: editStore });
   closeSheet('editSheet');
   toast(editCat ? 'Taken off this list' : 'Removed');
@@ -811,7 +902,7 @@ function unsentCountFor(id) {
   } catch { return 0; }
 }
 
-function forgetListFromPhone() {
+async function forgetListFromPhone() {
   const id = editListId;
   if (!id || id === LIST_ID || id === DEFAULT_LIST) return;
   const label = knownLists()[id]?.label || prettify(id);
@@ -830,10 +921,11 @@ function forgetListFromPhone() {
       + `Open the list with signal first if you want ${one ? 'it' : 'them'} to go.`
     : '';
 
-  if (!confirm(`Take “${label}” off this phone?${warn}\n\n`
+  if (!await ask(`Take “${label}” off this phone?${warn}\n\n`
     + 'Only this phone forgets it. Nothing is deleted and nobody else notices.\n\n'
     + 'To get back in you will need the link and the passphrase again. If you have not '
-    + 'got the link, tap Cancel and use “Share this list” first.')) return;
+    + 'got the link, tap Cancel and use “Share this list” first.',
+  { yes: 'Take it off', danger: true })) return;
 
   // A REAL removal. Dropping the registry entry alone left the passphrase, the
   // salt, the check and the whole cached list in localStorage - so "off my
@@ -1588,10 +1680,20 @@ function wireEvents() {
     const unflag = e.target.closest('[data-unflag]');
     if (unflag) {
       const id = unflag.dataset.unflag;
-      if (confirm('Clear the "not stocked here" note for everyone?')) {
-        store.setFlag(id, store.state.ui.store, false);
+      // CAPTURED BEFORE THE QUESTION, and this is new with the in-app sheet.
+      // `confirm()` blocked the thread, so `ui.store` could not move between
+      // the tap and the answer. `ask()` does not block: the sheet can sit open
+      // while a `shops` record arrives and switches the tab underneath it, and
+      // the flag would then be cleared on whichever store the user happens to
+      // be looking at when they answer - not the one whose note they tapped.
+      // A flag is per item-and-store, so that is the wrong record entirely.
+      const storeId = store.state.ui.store;
+      ask('Clear the “not stocked here” note?\n\nIt goes for everyone on this list, not just you. The item itself stays exactly where it is.',
+        { yes: 'Clear the note' }).then((ok) => {
+        if (!ok) return;
+        store.setFlag(id, storeId, false);
         sync?.drain();
-      }
+      });
       return;
     }
     if (planning) return;   // planning mode has no Got/Swap/Skip
@@ -1721,9 +1823,15 @@ function wireEvents() {
 
   $('menuTrip').onclick = () => { closeSheet('menuSheet'); openTrip(); };   // guarded inside
   $('menuName').onclick = () => { closeSheet('menuSheet'); $('nameInput').value = store.state.me.name; openSheet('nameSheet'); };
-  $('menuClear').onclick = () => {
+  $('menuClear').onclick = async () => {
     if (blockedWhileLocked()) return;
-    if (!confirm('Start a new trip?\n\nThis clears EVERYONE\u2019s ticks, and sets the new trip to whatever was bought on this one. You can change it under “Choose what to buy”.')) return;
+    // NAMES THE LIST, because "EVERYONE's ticks" answers WHO and leaves WHERE
+    // wide open - read on 2026-09-20 it does not say whether it reaches your
+    // other lists. It does not: the store is `createStore({ns: LIST_ID})` and
+    // sync writes under `lists/<listId>`, so every write here is scoped to the
+    // list on screen. The second line says the other lists are untouched
+    // rather than leaving that to be inferred from silence.
+    if (!await ask(`Start a new trip on “${listLabel()}”?\n\nThis clears EVERYONE\u2019s ticks on this list — yours and the other phones’. Your other lists are not touched.\n\nThe new trip starts with whatever was bought, swapped or missing on this one. You can change it under “Choose what to buy”.`, { yes: 'Start a new trip', danger: true })) return;
     // Order matters: the statuses are the only record of what this trip
     // contained, so the plan must be captured before they are cleared.
     const n = store.replanFromLastTrip();
@@ -1734,18 +1842,76 @@ function wireEvents() {
   };
   $('menuRestore').onclick = () => {
     if (blockedWhileLocked()) return;
+    // TWO DIFFERENT HIDINGS, one button, because to the person tapping it they
+    // are one idea: "put back what went". `unemptyList` undoes an Empty (no
+    // records were written, so this is one value); `restoreHidden` puts back
+    // catalogue rows taken off one at a time. Order does not matter - they
+    // touch different things - but the message does, so they are counted
+    // separately and reported separately rather than summed into one number
+    // that would describe neither.
+    const unswept = store.unemptyList();
     const n = store.restoreHidden();
     closeSheet('menuSheet');
     sync?.drain();
-    toast(n ? `Put back ${n} item${n === 1 ? '' : 's'}` : 'Nothing was taken off this list');
+    if (unswept && n) toast(`The list is back, and ${n} other item${n === 1 ? '' : 's'} with it`);
+    else if (unswept) toast('The list is back');
+    else if (n) toast(`Put back ${n} item${n === 1 ? '' : 's'}`);
+    else toast('Nothing was taken off this list');
   };
-  $('menuClearPlan').onclick = () => {
+  $('menuEmpty').onclick = async () => {
     if (blockedWhileLocked()) return;
-    if (!confirm('Put every item back on the trip for everyone?')) return;
-    store.clearPlan(); closeSheet('menuSheet'); sync?.drain(); toast('Everything is back on the list');
+    // COUNTED BY DISTINCT ID, not by rows on screen. A catalogue item whose
+    // section says "Both" is listed under Sam's AND Costco, so counting rows
+    // said "all 124 items" on a list holding 80 - a wrong number in the one
+    // sentence §1 requires a shared destructive action to get right.
+    const seen = new Set();
+    for (const shop of View.shopsFor(store.state)) {
+      for (const sec of View.buildGroups(store.state, shop.id)) {
+        for (const it of sec.items) seen.add(it.id);
+      }
+    }
+    const n = seen.size;
+    // NOTHING TO EMPTY IS ITS OWN ANSWER. The old guard also asked whether
+    // anything was hidden, which is large exactly AFTER an empty - so emptying
+    // twice produced a red danger sheet reading "This takes all 0 items off
+    // this list", then a toast saying it was already empty. Opening the menu
+    // again to check the first one worked is the likely path to it.
+    if (!n) {
+      closeSheet('menuSheet');
+      toast(store.sweptAt()
+        ? 'Already empty — “Put back items that were taken off” brings it back'
+        : 'This list is already empty');
+      return;
+    }
+    if (!await ask(`Empty “${listLabel()}” for everyone?\n\n`
+      + `This takes ${n === 1 ? 'the 1 item' : `all ${n} items`} off this list, on everyone’s phone — not just yours. Your other lists are not touched.\n\n`
+      + 'Nothing is deleted, and nothing is lost. “Put back items that were taken off” in this menu brings all of it back.',
+    { yes: 'Empty the list', danger: true })) return;
+    store.emptyList();
+    closeSheet('menuSheet');
+    sync?.drain();
+    toast(`Emptied — Menu → “Put back items that were taken off” returns all ${n}`);
   };
-  $('menuForget').onclick = () => {
-    if (!confirm('Forget this device only? The shared list is untouched.')) return;
+  $('menuClearPlan').onclick = async () => {
+    if (blockedWhileLocked()) return;
+    // NOTHING TO UNDO IS ITS OWN ANSWER (§1, never silently do nothing). Until
+    // somebody uses "Choose what to buy" there is no shortlist, so this asked a
+    // frightening shared-blast-radius question and then changed nothing
+    // observable - the whole list was already showing. The row is always
+    // visible, so this path is the common one on a list nobody plans on.
+    if (!store.hasPlan()) {
+      closeSheet('menuSheet');
+      toast('The whole list is already showing');
+      return;
+    }
+    if (!await ask(`Show the whole list again on “${listLabel()}”?\n\nThis undoes “Choose what to buy” on everyone’s phone, not just yours. Your other lists are not touched, and nothing is deleted.`, { yes: 'Show everything' })) return;
+    store.clearPlan(); closeSheet('menuSheet'); sync?.drain(); toast('The whole list is showing again');
+  };
+  $('menuForget').onclick = async () => {
+    if (!await ask('Forget this list on this phone?\n\n'
+      + 'Only this phone forgets it. The shared list itself is untouched, nothing is deleted, and nobody else notices.\n\n'
+      + 'To get back in you will need the link and the passphrase again.',
+    { yes: 'Forget it', danger: true })) return;
     store.reset();
     // Through `perListKeys`, not a hand-written trio. This function is the one
     // `perListKeys` was written to stop drifting from, and it was drifting
