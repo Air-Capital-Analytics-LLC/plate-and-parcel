@@ -341,7 +341,12 @@ input:disabled{opacity:.5; background:var(--panel);}
    buttons were visible, and the instant a paste parsed, the preview pushed the
    button they came for off screen. Sticky costs one rule and means the answer
    is always reachable however long the list is. */
-#importSheet .row{position:sticky; bottom:0; background:var(--panel); padding-top:10px;}
+#importSheet .row, #addSheet .row, #editSheet .row:first-of-type{
+  position:sticky; bottom:0; background:var(--panel); padding-top:10px;
+  /* A TOP EDGE, because a pinned row with nothing above it reads as the bottom
+     of the sheet. On the import sheet that hid the store picker AND the preview
+     entirely - and the preview is the acceptance, since an import has no undo. */
+  border-top:1px solid var(--line);}
 /* Reported as "I really don't see it". It was a 26px muted glyph on a
    transparent background, tucked past the quantity stepper - readable as
    decoration, not as something to press. Now it is the same size and the same
@@ -462,6 +467,7 @@ input:disabled{opacity:.5; background:var(--panel);}
    were 14px apart with the red one full-width directly under the halved Save
    button, and the thumb arrives there already moving. */
 .sep{border:none; border-top:1px solid var(--line); margin:18px 0 0;}
+.offerbar,
 .lostbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
 .lostbar span{flex:1 1 60%; min-width:180px;}
 .lostbar button{padding:9px 16px; font-size:.82rem; font-weight:700;
@@ -747,7 +753,9 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <h2>Edit item</h2>
   <div class="fld"><label>What is it?</label><input id="editName" autocomplete="off" maxlength="120"></div>
   <div class="fld"><label>Note (size, why, anything else)</label><input id="editNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
-  <div class="fld"><label>Which store?</label><div class="seg" id="editStore"></div></div>
+  <div class="fld"><label>Which stores? <span class="lbl-note">&mdash; tap every store you might get it at</span></label>
+    <div class="seg" id="editStore"></div>
+    <div class="hint">It will show on each store's tab, but it is <b>one thing to buy</b> &mdash; tick it off anywhere and it is ticked everywhere.</div></div>
   <!-- PRICE LIVES HERE, not on the Add sheet. Adding happens at home; pricing
        happens in the aisle, and a fifth control on Add puts its button below
        the fold at the Largest text setting.
@@ -783,7 +791,25 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <h2>Add an item</h2>
   <div class="fld"><label>What is it?</label><input id="addName" placeholder="e.g. paper towels" autocomplete="off" maxlength="120"></div>
   <div class="fld"><label>Note (size, why, anything else)</label><input id="addNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
-  <div class="fld"><label>Which store?</label><div class="seg" id="addStore"></div></div>
+  <div class="fld"><label>Which stores? <span class="lbl-note">&mdash; tap every store you might get it at</span></label>
+    <div class="seg" id="addStore"></div>
+    <div class="hint">It will show on each store's tab, but it is <b>one thing to buy</b> &mdash; tick it off anywhere and it is ticked everywhere.</div></div>
+  <!-- OPTIONAL, BOTH OF THEM. Only the name and the stores are required; these
+       two exist because the paste-a-list path could already set them and typing
+       one in by hand could not. Leave them alone and you get one, unpriced,
+       exactly as before. The action row below is sticky, which is what retires
+       the old objection to putting them here (LEDGER M31). -->
+  <div class="fld"><label>How many? <span class="lbl-note">&mdash; optional</span></label>
+    <div class="seg" id="addQty">
+      <button type="button" data-addqty="-1" aria-label="One fewer">&minus;</button>
+      <span class="qnum" id="addQtyNum">1</span>
+      <button type="button" data-addqty="1" aria-label="One more">+</button>
+    </div></div>
+  <div class="fld"><label>What does one cost? <span class="lbl-note">&mdash; optional</span></label>
+    <div class="row">
+      <input id="addPrice" inputmode="decimal" autocomplete="off" maxlength="9" placeholder="e.g. 3.99">
+      <button type="button" class="pxl" id="addByWeight" aria-pressed="false">Weighed at the till</button>
+    </div></div>
   <div class="row"><button data-close="addSheet">Cancel</button><button class="primary" id="saveAdd">Add</button></div>
 </div></div>
 
@@ -882,14 +908,23 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 
 <div class="sheet-bg" id="importSheet"><div class="sheet">
   <h2>Paste a list</h2>
+  <!-- WHICH LIST, FIRST AND LOUD. Reported from real use 2026-09-20: somebody
+       being shown the app pasted their own shopping list into someone else's
+       household list, because this sheet covers the banner and nothing on it
+       said which list was underneath. There is no undo for an import, so the
+       only place to catch that is before the tap. §3: say when something
+       affects other people. -->
+  <div class="warnbox" id="importWhere"></div>
+  <div class="fld"><label>Which stores? <span class="lbl-note">&mdash; tap every store you might get them at</span></label>
+    <div class="seg" id="importStore"></div></div>
   <div class="fld"><label>One item per line. Paste from anywhere.</label>
-    <textarea id="importText" rows="4" placeholder="- 2 x milk&#10;bread $3.49&#10;[ ] eggs"></textarea>
+    <textarea id="importText" rows="3" placeholder="- 2 x milk&#10;bread $3.49&#10;[ ] eggs"></textarea>
     <!-- THE RULES LIVE HERE, NOT IN THE PLACEHOLDER. The placeholder was the
          only place "2 x" and "$3.49" appeared, and it is wiped by the first
          keystroke - so somebody pasting from Notes never saw it at all. This
          line survives while they edit, which is exactly when the rule is
          wanted. -->
-    <div class="hint">Put <b>2 x</b> in front for two of something, and <b>$3.49</b> at the end for a price. Bullets, numbers and tick boxes are all fine.</div></div>
+    <div class="hint">Put <b>2 x</b> in front for two, and <b>$3.49</b> at the end for a price.</div></div>
   <!-- THE PREVIEW IS THE FEATURE. The parser guesses quantities and prices, and
        the roadmap forbids inferring a price from a pasted line without showing
        the parse - so this is what turns "Add them" into the acceptance §1

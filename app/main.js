@@ -527,12 +527,26 @@ function saveNote() {
 }
 
 let addStore = 'sams';
+/** How many, and what one costs. BOTH OPTIONAL - only the name and the stores
+ *  are required, so leaving these alone gives exactly the old behaviour. */
+let addQty = 1;
+let addByWeight = false;
+
+/** Every shop the new item goes on. `addStore` is the first of these. */
+let addShops = new Set(['sams']);
 function openAdd() {
   addStore = store.state.ui.store;
+  addShops = new Set([addStore]);
+  addQty = 1;
+  addByWeight = false;
+  $('addQtyNum').textContent = '1';
+  $('addPrice').value = '';
+  $('addByWeight').setAttribute('aria-pressed', 'false');
+  $('addPrice').disabled = false;
   $('addName').value = '';
   $('addNote').value = '';
   $('addStore').innerHTML = View.shopsFor(store.state)
-    .map((s) => `<button data-addstore="${s.id}" class="${addStore === s.id ? 'on' : ''}">${View.esc(s.short)}</button>`)
+    .map((s) => `<button data-addstore="${s.id}" class="${addShops.has(s.id) ? 'on' : ''}">${View.esc(s.short)}</button>`)
     .join('');
   openSheet('addSheet');
   setTimeout(() => $('addName').focus(), 120);
@@ -542,6 +556,8 @@ function openAdd() {
 
 let editId = null;
 let editStore = 'sams';
+/** Every shop the edited item is on. `editStore` is the first of these. */
+let editShops = new Set(['sams']);
 let editCat = false;
 /** Sold by weight, so no per-unit price exists and none may be typed. */
 let editByWeight = false;
@@ -577,6 +593,11 @@ function openEdit(id) {
   editId = id;
   editCat = View.isCatalogueId(id);
   editStore = a?.store || row.store;
+  // EVERY shop this item is on, as a set. `editStore` stays the FIRST one -
+  // the record still needs a `store`, and that is what a v31 phone reads.
+  // EVERY TAB HOLDING IT, not `findItem`'s first hit - see `shopsHolding`.
+  const held = a ? View.shopsOf(a) : View.shopsHolding(store.state, id);
+  editShops = new Set(held.length ? held : [row.store]);
   $('editName').value = row.name || '';
   $('editNote').value = (a ? a.note : '') || '';
   // SEEDED FROM THE RECORD, not from the catalogue's `est` string. The roadmap
@@ -602,7 +623,7 @@ function openEdit(id) {
     ? '\u232b Take off this list'
     : '\u232b Remove from the list';
   $('editStore').innerHTML = View.shopsFor(store.state)
-    .map((s) => `<button data-editstore="${s.id}" class="${editStore === s.id ? 'on' : ''}">${View.esc(s.short)}</button>`)
+    .map((s) => `<button data-editstore="${s.id}" class="${editShops.has(s.id) ? 'on' : ''}">${View.esc(s.short)}</button>`)
     .join('');
   $('editWho').textContent = (!editCat && a?.by) ? `Added by ${a.by}.` : '';
   openSheet('editSheet');
@@ -647,11 +668,22 @@ function saveEdit() {
     toast('Write the price like 3.99, up to 1000');
     return;
   }
-  const was = store.state.added[editId]?.store
-    ?? View.findItem(store.state, editId)?.store;
-  const moved = was !== editStore;
+  // FIRST OF THE SET, and the set travels with it. `store` stays a real single
+  // shop because the record still requires one and a v31 phone reads only that.
+  const shops = [...editShops];
+  editStore = shops.includes(editStore) ? editStore : shops[0];
+  // WAS IT ON THIS TAB? Only membership is being asked, so ask `onShop`.
+  // `shopsOf` is the list-shaped question and had to be fed a hand-built fake
+  // record to answer it - which returned the literal string ["undefined"] when
+  // the lookup missed.
+  const prev = store.state.added[editId];
+  const wasHere = prev
+    ? View.onShop(prev, store.state.ui.store)
+    : View.findItem(store.state, editId)?.store === store.state.ui.store;
+  const moved = wasHere && !editShops.has(store.state.ui.store);
   if (!store.upsertAdded(editId, {
-    name, note: $('editNote').value.trim(), store: editStore, cat: editCat,
+    name, note: $('editNote').value.trim(), store: editStore,
+    also: shops.filter((x) => x !== editStore), cat: editCat,
   })) {
     toast('That item is already gone');
     closeSheet('editSheet');
@@ -697,7 +729,22 @@ async function deleteEdited() {
 function saveAdd() {
   const name = $('addName').value.trim();
   if (!name) { toast('Give it a name first'); return; }
-  store.addItem({ name, note: $('addNote').value.trim(), store: addStore });
+  // A BAD price is refused; an EMPTY one is not. `parsePrice` returns null for
+  // empty (meaning "no price") and undefined only for something malformed, so
+  // the Add button is never blocked by a field the person chose not to fill.
+  const cents = addByWeight ? null : parsePrice($('addPrice').value);
+  if (cents === undefined) { toast('Write the price like 3.99, up to 1000'); return; }
+  const shops = [...addShops];
+  addStore = shops.includes(addStore) ? addStore : shops[0];
+  const newId = store.addItem({
+    name, note: $('addNote').value.trim(), store: addStore,
+    also: shops.filter((x) => x !== addStore),
+  });
+  // Written only when they are not the default - same rule the paste path
+  // follows, so a quiet add still costs exactly one record.
+  if (newId && addQty > 1) store.setQty(newId, addQty);
+  if (newId && addByWeight) store.setPrice(newId, 0, true);
+  else if (newId && cents !== null) store.setPrice(newId, cents, false);
   closeSheet('addSheet');
   if (store.state.ui.store !== addStore) store.setUI({ store: addStore });
   toast('Added');
@@ -779,7 +826,7 @@ function storesHolding() {
     const rows = View.buildGroups(store.state, s.id).reduce((n, g) => n + g.items.length, 0);
     if (!rows) continue;
     const added = Object.keys(store.state.added)
-      .filter((id) => { const a = store.state.added[id]; return a && !a.del && a.store === s.id; }).length;
+      .filter((id) => { const a = store.state.added[id]; return a && !a.del && View.onShop(a, s.id); }).length;
     // What survives being switched off, and what does not.
     out.set(s.id, { rows, added, catalogue: Math.max(0, rows - added) });
   }
@@ -1424,6 +1471,14 @@ function dismissInstallBar() {
 /* ================= import ================= */
 
 let importParsed = [];
+/** Every shop a paste will land on. Seeded from the tab you were on. */
+let importShops = new Set();
+
+function paintImportShops() {
+  $('importStore').innerHTML = View.shopsFor(store.state)
+    .map((s) => `<button data-importstore="${s.id}" class="${importShops.has(s.id) ? 'on' : ''}">${View.esc(s.short)}</button>`)
+    .join('');
+}
 
 /**
  * How many preview rows are drawn before it says "and N more".
@@ -1446,6 +1501,14 @@ function openImport() {
   closeSheet('menuSheet');
   $('importText').value = '';
   importParsed = [];
+  // NAMES THE LIST. This sheet covers the banner, so without it the only clue
+  // to which list you are pasting into is memory - and somebody got that wrong
+  // in front of its author. Says what to do about it, too, rather than just
+  // stating a fact (§3, never a dead end).
+  $('importWhere').innerHTML = `Adding to <b>${View.esc(listLabel())}</b>.`
+    + ' Wrong list? Close this, then <b>Menu → My lists</b>.';
+  importShops = new Set([store.state.ui.store]);
+  paintImportShops();
   $('importPreview').hidden = true;
   $('importEmpty').textContent = 'Nothing to add yet — paste a list above, one item per line.';
   $('importEmpty').hidden = false;
@@ -1516,15 +1579,24 @@ function previewImport() {
   // whichever tab you were on, and this sheet covers the tabs - so without this
   // a paste can land somewhere the user did not intend, and there is no undo.
   const storeLabel = importStoreLabel();
+  // NOT "...on your Sam's and Costco list". Ungrammatical once more than one
+  // shop is picked, and it overloads "list" six inches under a warnbox where
+  // "list" means the household - on the one sheet added because somebody
+  // confused which list they were in.
   $('importHead').textContent = storeLabel
-    ? `This is what you will get on your ${storeLabel} list:`
+    ? `This is what you will get, on ${storeLabel}:`
     : 'This is what you will get:';
 }
 
-/** The tab an import will land on, as it is named on screen. */
+/** The shops an import will land on, named as they are on screen. */
 function importStoreLabel() {
-  const s = View.shopsFor(store.state).find((x) => x.id === store.state.ui.store);
-  return (s && s.short) || '';
+  const picked = View.shopsFor(store.state).filter((x) => importShops.has(x.id)).map((x) => x.short);
+  if (!picked.length) return '';
+  if (picked.length === 1) return picked[0];
+  // Read aloud - "Sam's and Costco" - rather than joined with commas and left
+  // hanging, because this sentence is the last thing before an action with no
+  // undo.
+  return picked.slice(0, -1).join(', ') + ' and ' + picked[picked.length - 1];
 }
 
 function doImport() {
@@ -1534,7 +1606,8 @@ function doImport() {
   // tab the user did not mean, this sentence is the one chance to notice -
   // there is no undo for an add.
   const where = importStoreLabel();
-  const n = store.importItems(importParsed, store.state.ui.store);
+  const shops = [...importShops];
+  const n = store.importItems(importParsed, shops[0], shops.slice(1));
   closeSheet('importSheet');
   toast(where ? `Added ${n} item${n === 1 ? '' : 's'} to ${where}` : `Added ${n} item${n === 1 ? '' : 's'}`);
   sync?.drain();
@@ -1912,22 +1985,58 @@ function wireEvents() {
 
   $('editSave').onclick = saveEdit;
   $('editDelete').onclick = deleteEdited;
+  // MULTI-SELECT, and it cannot be emptied. An item on no shop at all is on no
+  // tab at all - unreachable, with the record intact and synced the whole time,
+  // which is the failure `shopsFor`'s orphan block exists to prevent. Tapping
+  // the last one left is refused and says why rather than doing nothing.
+  const toggleShop = (set, id, refresh) => {
+    if (set.has(id)) {
+      if (set.size === 1) { toast('Tap another store on first, then you can turn this one off'); return; }
+      set.delete(id);
+    } else {
+      set.add(id);
+    }
+    refresh();
+  };
   $('editStore').addEventListener('click', (e) => {
     const b = e.target.closest('[data-editstore]');
     if (!b) return;
-    editStore = b.dataset.editstore;
-    for (const x of $('editStore').children) x.classList.toggle('on', x === b);
+    toggleShop(editShops, b.dataset.editstore, () => {
+      for (const x of $('editStore').children) x.classList.toggle('on', editShops.has(x.dataset.editstore));
+    });
   });
   $('editByWeight').onclick = () => {
     editByWeight = !editByWeight;
     $('editByWeight').setAttribute('aria-pressed', String(editByWeight));
     applyByWeight();
   };
+  $('importStore').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-importstore]');
+    if (!b) return;
+    toggleShop(importShops, b.dataset.importstore, () => {
+      paintImportShops();
+      previewImport();          // the heading names the shops, so it must redraw
+    });
+  });
+  $('addQty').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-addqty]');
+    if (!b) return;
+    addQty = Math.max(1, Math.min(Store.MAX_QTY, addQty + Number(b.dataset.addqty)));
+    $('addQtyNum').textContent = String(addQty);
+  });
+  $('addByWeight').onclick = () => {
+    addByWeight = !addByWeight;
+    $('addByWeight').setAttribute('aria-pressed', String(addByWeight));
+    // Disabled, not cleared - turning it off again gives the number back.
+    $('addPrice').disabled = addByWeight;
+    $('addPrice').placeholder = addByWeight ? '' : 'e.g. 3.99';
+  };
   $('addStore').addEventListener('click', (e) => {
     const b = e.target.closest('[data-addstore]');
     if (!b) return;
-    addStore = b.dataset.addstore;
-    [...$('addStore').children].forEach((x) => x.classList.toggle('on', x.dataset.addstore === addStore));
+    toggleShop(addShops, b.dataset.addstore, () => {
+      [...$('addStore').children].forEach((x) => x.classList.toggle('on', addShops.has(x.dataset.addstore)));
+    });
   });
 
   document.querySelectorAll('[data-close]').forEach((b) =>
@@ -2306,11 +2415,62 @@ function reportDroppedWork() {
  *  inside would be reading an empty local store and could not see a choice or
  *  content that already exists on the list. */
 let parkedPending = false;
+/** This phone is the one that just made this list, so the import offer is for
+ *  it and not for the next person to open the link. */
+let justCreated = false;
 function runParkedShops() {
   if (!parkedPending) return;
   parkedPending = false;
+  // READ BEFORE `applyParkedShops` SPENDS IT. `createList` writes this park on
+  // the phone that made the list and nowhere else, so it is already exactly the
+  // signal "this phone just created this list" - no second key needed, and it
+  // cannot fire for the next person to open the link.
+  justCreated = !!readLocal(NEWSHOPS_KEY(LIST_ID), null);
   applyParkedShops();
+  offerImportOnNewList();
   sync?.drain();
+}
+
+/**
+ * Offer to paste a list, ONCE, on a list that has just been made.
+ *
+ * "Paste a list" lives in the menu, behind a button somebody has to know to
+ * look for - so a brand new list opens empty and the fastest way to fill it is
+ * the least discoverable thing in the app. Asked for 2026-09-20: offer it at
+ * the moment it is obviously useful rather than only referring to it.
+ *
+ * ONLY ON A LIST WITH NOTHING IN IT, and only while this phone still holds the
+ * park from `createList` - so it never appears on the household list, never on
+ * a list somebody else has already filled, and never twice. The park is cleared
+ * by `applyParkedShops` above, which runs first.
+ */
+function offerImportOnNewList() {
+  if (LIST_ID === DEFAULT_LIST) return;
+  if (!justCreated) return;
+  justCreated = false;
+  if (Object.keys(store.state.added).length || Object.keys(store.state.items).length) return;
+  // Guarded on the loss bar's own BUTTON, not on `.lostbar` - the offer used
+  // to wear that class itself, so the selector would have started answering
+  // yes about the offer.
+  if ($('lostOk')) return;                            // real news outranks an offer
+
+  const bar = document.createElement('div');
+  // NOT `.lostbar` - that class means "work that is gone for good" and waits
+  // for a human instead of timing out. Amber that sometimes means a lost trip
+  // and sometimes means "fancy pasting something?" stops meaning anything.
+  bar.className = 'warnbox offerbar';
+  bar.innerHTML = '<span><b>Nothing on this list yet.</b> If you already have one written'
+    + ' somewhere, paste the whole thing in at once &mdash; or later, from'
+    + ' <b>Menu → Paste a list</b>.</span>'
+    + '<button class="pxl" id="newImportGo">Paste a list</button>'
+    // "Later", not "Not now": this bar appears exactly once ever, so "Not now"
+    // would promise a return it never makes - and the install bar already uses
+    // "Not now" to mean "ask me again".
+    + '<button class="pxl" id="newImportNo">Later</button>';
+  listEl.parentNode.insertBefore(bar, listEl);
+  $('newImportGo').onclick = () => { bar.remove(); openImport(); };
+  $('newImportNo').onclick = () => bar.remove();
+  document.querySelector('.installbar')?.remove();
 }
 
 function applyParkedShops() {

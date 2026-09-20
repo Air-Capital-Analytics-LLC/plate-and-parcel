@@ -225,6 +225,19 @@ export function isWellFormed(rec, kind) {
     // this file - `cat` has only ever been written as `1`, so no existing
     // record on any phone is dropped by this.
     if (rec.cat !== undefined && rec.cat !== 0 && rec.cat !== 1) return false;
+    // `also` — the OTHER shops this item is on (v32). `store` stays the first
+    // one and stays required, which is what lets a v31 phone keep showing the
+    // item instead of losing it: that build never reads `also`, so it renders
+    // the row on `store` alone. Fewer tabs, never no tabs.
+    //
+    // Gated like `shops` ids are, and bounded: an unbounded array here is a
+    // record that can grow without limit inside an envelope every phone
+    // re-downloads on every reconnect.
+    if (rec.also !== undefined) {
+      if (!Array.isArray(rec.also)) return false;
+      if (rec.also.length > SHOP_IDS.length - 1) return false;   // the primary is not in here
+      for (const s of rec.also) if (typeof s !== 'string' || !SHOP_IDS.includes(s)) return false;
+    }
   } else if (kind === 'price') {
     // ITS OWN KIND, not a field on `added`, and the reasons are measured rather
     // than stylistic. `upsertAdded` writes `del:false` unconditionally, so
@@ -622,10 +635,11 @@ export function createStore({ ns = 'household' } = {}) {
     return rec;
   }
 
-  function addItem({ name, note, store }) {
+  function addItem({ name, note, store, also }) {
     const id = 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     state.added[id] = stamp({
       name: String(name), note: String(note || ''), store: String(store),
+      ...alsoField(also, String(store)),
       del: false, by: state.me.name,
     });
     state.outbox[obKey('added', id)] = 'added';
@@ -662,15 +676,55 @@ export function createStore({ ns = 'household' } = {}) {
    *
    * `cat` marks the second kind. It is load-bearing in prune() - see there.
    */
+  /**
+   * Normalise the extra-shops list, or omit the field entirely.
+   *
+   * ONE ITEM, SEVERAL SHOPS, ONE ID - and that last part is the whole point.
+   * The tick, the quantity, the price and the plan entry are all keyed by item
+   * id, so an item on three tabs shares all of them for free: tick it at Sam's
+   * and it is ticked at Costco, exactly as the catalogue's 44 "Both" rows
+   * already behave. Writing a second COPY instead would mean a second id and
+   * therefore two independent ticks - you would tick it at Sam's and it would
+   * sit unticked at Costco. That is strictly worse than one tab, which is why
+   * it is not what this does.
+   *
+   * Omitted when empty rather than written as `[]`: a field that says nothing
+   * still costs bytes in every envelope, and `isWellFormed` treats absent and
+   * empty the same.
+   */
+  function alsoField(also, primary) {
+    if (!Array.isArray(also)) return {};
+    const out = [];
+    for (const s of also) {
+      const id = String(s);
+      // Never the primary, never a duplicate, never a shop that does not exist.
+      if (id === primary || out.includes(id) || !SHOP_IDS.includes(id)) continue;
+      out.push(id);
+    }
+    return out.length ? { also: out } : {};
+  }
+
   function upsertAdded(id, patch) {
     const cur = state.added[id];
     const name = String(patch.name ?? cur?.name ?? '').trim();
     if (!name) return false;
+    const store = String(patch.store ?? cur?.store ?? 'sams');
+    // THE OLD `also` IS DROPPED FIRST, and that is the whole fix. `...cur`
+    // carried it in, and `alsoField` returns `{}` when the new list is empty -
+    // an empty object contributes no key, so the stale value survived the
+    // spread untouched. Every path that took an item back down to ONE shop was
+    // therefore a silent no-op: untick Costco, tap Save, get "Saved", and the
+    // item is still on the Costco tab on all four phones. Reducing 3 shops to 2
+    // worked, because that branch is non-empty and overrode the spread - so it
+    // failed only on the last removal, which is the common one. §1: a tap that
+    // appears to work and does not is worse than an error.
+    const { also: _drop, ...rest } = (cur || {});
     state.added[id] = stamp({
-      ...(cur || {}),
+      ...rest,
       name,
       note: String(patch.note ?? cur?.note ?? ''),
-      store: String(patch.store ?? cur?.store ?? 'sams'),
+      store,
+      ...alsoField(patch.also !== undefined ? patch.also : cur?.also, store),
       del: false,
       by: cur?.by || state.me.name,
       ...(patch.cat ? { cat: 1 } : {}),
@@ -1228,12 +1282,12 @@ export function createStore({ ns = 'household' } = {}) {
    * Accepts the old array-of-strings shape too, so a caller that has not been
    * updated cannot silently import nothing.
    */
-  function importItems(entries, storeId) {
+  function importItems(entries, storeId, alsoShops) {
     let n = 0;
     for (const e of entries) {
       const p = typeof e === 'string' ? { name: e, qty: MIN_QTY, price: null, byWeight: false } : e;
       if (!p || !p.name) continue;
-      const id = addItem({ name: p.name, note: '', store: storeId });
+      const id = addItem({ name: p.name, note: '', store: storeId, also: alsoShops });
       n++;
       if (!id) continue;
       if (p.qty > MIN_QTY) setQty(id, p.qty);

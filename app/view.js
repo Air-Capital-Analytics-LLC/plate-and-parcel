@@ -38,6 +38,53 @@ export function chosenShopIds(state) {
   return picked.length ? picked : [...LEGACY_SHOPS];
 }
 
+/**
+ * Every shop an added item sits on: its `store`, plus any in `also` (v32).
+ *
+ * `store` is still the first one and still required, so a v31 phone - which
+ * knows nothing about `also` - renders the item on that one tab rather than
+ * losing it. Fewer tabs, never none.
+ */
+export function shopsOf(rec) {
+  if (!rec) return [];
+  const out = [String(rec.store)];
+  if (Array.isArray(rec.also)) {
+    for (const s of rec.also) if (typeof s === 'string' && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Every tab that is currently SHOWING this id, record or no record.
+ *
+ * `findItem` answers "give me the row" and returns the FIRST tab holding it,
+ * which is the right answer to its own question and the wrong seed for a store
+ * picker: 44 of the catalogue's 84 rows are listed at both clubs under one id,
+ * so standing on Costco and opening one lit up Sam's alone - and saving wrote
+ * `store:'sams'` with no `also`, taking the row off the Costco tab. Measured:
+ * costco 58 -> 57 on a single price edit, on all four phones, with the sheet
+ * saying "Saved". §1, the list is never silently smaller.
+ *
+ * Only needed when the item has no `added` record yet; once it has one,
+ * `shopsOf` is the truth.
+ */
+export function shopsHolding(state, id) {
+  const out = [];
+  for (const s of shopsFor(state)) {
+    for (const sec of buildGroups(state, s.id)) {
+      if (sec.items.some((i) => i.id === id)) { out.push(s.id); break; }
+    }
+  }
+  return out;
+}
+
+/** Is this added record on this tab? The single question, asked in one place. */
+export function onShop(rec, storeId) {
+  if (!rec) return false;
+  if (rec.store === storeId) return true;
+  return Array.isArray(rec.also) && rec.also.includes(storeId);
+}
+
 export function shopsFor(state) {
   const recs = state?.shops || {};
   const chosen = SHOP_POOL.filter((s) => recs[s.id] && recs[s.id].on === true);
@@ -58,10 +105,17 @@ export function shopsFor(state) {
   const orphans = [];
   for (const id of Object.keys(state?.added || {})) {
     const a = state.added[id];
-    if (!a || a.del || have.has(a.store)) continue;
-    have.add(a.store);
-    const pool = SHOP_POOL.find((s) => s.id === a.store);
-    if (pool) orphans.push(pool);
+    if (!a || a.del) continue;
+    // EVERY shop the item is on, not just its first. An item on Sam's AND a
+    // switched-off Target must keep the Target tab too, or the half of it
+    // filed there goes unreachable - which is the whole reason this block
+    // exists, applied to v32's shape.
+    for (const sid of shopsOf(a)) {
+      if (have.has(sid)) continue;
+      have.add(sid);
+      const pool = SHOP_POOL.find((s) => s.id === sid);
+      if (pool) orphans.push(pool);
+    }
   }
   const active = orphans.length
     ? SHOP_POOL.filter((s) => have.has(s.id))   // keep pool order
@@ -244,7 +298,9 @@ export function buildGroups(state, storeId) {
       const o = added[it.id];
       if (o && o.del) continue;                       // removed from this list
       if (sweptOut(state, it.id, at)) continue;       // emptied for everyone
-      if (o && o.store !== storeId) continue;         // moved to another shop
+      // ON THIS TAB? A catalogue row moved elsewhere is hidden here — but v32
+      // lets it be on several at once, so the question is no longer equality.
+      if (o && !onShop(o, storeId)) continue;
       items.push(o
         ? { ...it, name: o.name, detail: o.note || it.detail, edited: true, editable: true }
         : { ...it, editable: true });
@@ -256,7 +312,7 @@ export function buildGroups(state, storeId) {
   const mine = [];
   for (const id of Object.keys(added)) {
     const a = added[id];
-    if (!a || a.del || a.store !== storeId) continue;
+    if (!a || a.del || !onShop(a, storeId)) continue;
     if (sweptOut(state, id, at)) continue;            // emptied for everyone
     if (baseIds.has(id)) continue;                    // already shown above
     mine.push({ id, name: a.name, detail: a.note || '', mine: !a.cat, edited: !!a.cat, editable: true, by: a.by });
