@@ -279,6 +279,17 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .pbar{height:4px; background:var(--panel2); border-radius:2px; margin-top:8px; overflow:hidden;}
 .pbar>div{height:100%; background:var(--got); width:0; transition:width .25s;}
 .pmeta{display:flex; justify-content:space-between; font-size:.72rem; color:var(--muted); margin-top:5px;}
+/* Bigger than `.pmeta` on purpose: this is a number somebody squints at across
+   an aisle, and it is the only figure on the screen that answers "can we
+   afford this trolley". In rem, so the Text size control reaches it. */
+.pest{font-size:.82rem; color:var(--accent-ink); font-weight:600; margin-top:4px;}
+/* A qualifier inside a label, at the label's own weight rather than shouting. */
+.lbl-note{font-weight:400; opacity:.85;}
+/* The by-weight toggle sits beside the input, so neither may grow to push the
+   other off a 320px screen at the Largest setting. */
+#editPrice{flex:1 1 auto; min-width:0;}
+#editByWeight{flex:0 0 auto; padding:11px 10px; font-size:.78rem; white-space:nowrap;}
+#editByWeight[aria-pressed="true"]{--fill:var(--accent); color:var(--on-accent); font-weight:700;}
 
 .sec{margin:18px 0 7px; display:flex; align-items:center; justify-content:space-between; gap:8px;
   background:var(--panel); border-left:3px solid var(--accent-ink); border-radius:8px; padding:7px 11px;}
@@ -293,6 +304,19 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .nm{font-weight:600; font-size:.97rem; margin-bottom:2px; display:flex; align-items:center; flex-wrap:wrap; gap:5px;}
 .frozen{font-size:.6rem; background:var(--frozen-bg); color:var(--frozen-ink); border-radius:5px; padding:2px 6px; letter-spacing:.05em;}
 .who{font-size:.6rem; background:var(--panel2); color:var(--muted); border-radius:5px; padding:2px 6px; font-weight:500;}
+/* What the row costs, as somebody on this list typed it. NOT `.price` — that
+   class has belonged to the catalogue's own estimate string inside `.det`
+   since long before prices existed here, and a bare `.price` rule reaches it.
+   `.each` carries the unit price at .72rem, not smaller: it is the figure that
+   must not be misread as the line total, so it does not get the smallest type
+   on the screen. */
+.pricetag{font-size:.72rem; font-weight:700; color:var(--accent-ink); white-space:nowrap;}
+.pricetag .each{font-size:.72rem; font-weight:500; color:var(--muted); margin-left:5px;}
+.pricetag.by-weight{font-weight:500; color:var(--muted);}
+/* A disabled input had NO styling anywhere in this file, so the by-weight price
+   box was pixel-identical to the four live inputs above it — tapped, no
+   keyboard, nothing said. §1: never silently do nothing. */
+input:disabled{opacity:.5; background:var(--panel);}
 /* Reported as "I really don't see it". It was a 26px muted glyph on a
    transparent background, tucked past the quantity stepper - readable as
    decoration, not as something to press. Now it is the same size and the same
@@ -655,6 +679,11 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="tabs" id="tabs"></div>
   <div class="pbar"><div id="pfill"></div></div>
   <div class="pmeta"><span id="pleft"></span><span id="pright"></span></div>
+  <!-- The running estimate. Its own row because `.pmeta` is already at the
+       width of a 320px phone at the Largest text setting, and this line is the
+       one a shopper reads across the shop. `hidden` until there is something
+       honest to say - never "$0.00". -->
+  <div class="pest" id="pest" hidden></div>
 </header>
 
 <div class="installbar" id="installBar" style="display:none">
@@ -692,8 +721,25 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 <div class="sheet-bg" id="editSheet"><div class="sheet">
   <h2>Edit item</h2>
   <div class="fld"><label>What is it?</label><input id="editName" autocomplete="off" maxlength="120"></div>
-  <div class="fld"><label>Note (size, price, why)</label><input id="editNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
+  <div class="fld"><label>Note (size, why, anything else)</label><input id="editNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
   <div class="fld"><label>Which store?</label><div class="seg" id="editStore"></div></div>
+  <!-- PRICE LIVES HERE, not on the Add sheet. Adding happens at home; pricing
+       happens in the aisle, and a fifth control on Add puts its button below
+       the fold at the Largest text setting.
+
+       "for one" is ON SCREEN and not left to be inferred. A price here is per
+       unit, so 2 of them is twice this - which is the single thing that would
+       make every total silently double, and it is not the shopper's job to
+       guess which way round it works. `inputmode="decimal"` gets the numeric
+       keypad without `type=number`, whose spinners are a mis-tap target and
+       whose validation swallows a trailing dot mid-typing. -->
+  <div class="fld"><label>What does one cost? <span class="lbl-note">&mdash; optional</span></label>
+    <div class="row">
+      <input id="editPrice" inputmode="decimal" autocomplete="off" maxlength="9" placeholder="e.g. 3.99">
+      <button type="button" class="pxl" id="editByWeight" aria-pressed="false">Weighed at the till</button>
+    </div>
+    <div class="hint" id="editPriceHint">Adds to the running total for this store.</div>
+  </div>
   <div class="hint" id="editWho"></div>
   <div class="warnbox" id="editFromCat" hidden>This one came from the <b>reference
     catalogue</b>. Changing it here changes it <b>on this list only</b> &mdash; the
@@ -711,7 +757,7 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 <div class="sheet-bg" id="addSheet"><div class="sheet">
   <h2>Add an item</h2>
   <div class="fld"><label>What is it?</label><input id="addName" placeholder="e.g. paper towels" autocomplete="off" maxlength="120"></div>
-  <div class="fld"><label>Note (size, price, why)</label><input id="addNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
+  <div class="fld"><label>Note (size, why, anything else)</label><input id="addNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
   <div class="fld"><label>Which store?</label><div class="seg" id="addStore"></div></div>
   <div class="row"><button data-close="addSheet">Cancel</button><button class="primary" id="saveAdd">Add</button></div>
 </div></div>

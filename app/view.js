@@ -7,7 +7,7 @@
  */
 
 import { DATA } from './data.js';
-import { STATUSES, MIN_QTY, MAX_QTY, SHOP_POOL, LEGACY_SHOPS } from './store.js';
+import { STATUSES, MIN_QTY, MAX_QTY, MAX_PRICE, SHOP_POOL, LEGACY_SHOPS } from './store.js';
 
 export const flagKey = (itemId, storeId) => itemId + '@' + storeId;
 
@@ -287,16 +287,130 @@ export function anyPlanned(state) {
   return false;
 }
 
+/**
+ * What is on this trip, and what it is likely to cost.
+ *
+ * THE ESTIMATE IS COMPUTED HERE, and the placement is deliberate on both sides.
+ *
+ * NOT its own subscriber: that would bypass the sync-type early return and the
+ * `document.hidden` skip the renderer already has, so a phone in a pocket would
+ * re-total the list on every record that arrived over a flapping link.
+ *
+ * NOT fused into `listHTML`'s walk either, tempting as that is - `listHTML`
+ * filters on `hideDone`, so the moment somebody turned that on the total would
+ * silently drop to the cost of what was left, and a total that changes when you
+ * change a VIEW setting is a total nobody can trust.
+ *
+ * `counts` already walks exactly the right set: everything on the trip, ticked
+ * or not, unaffected by `hideDone`. The estimate rides along for free.
+ *
+ * PER UNIT, times quantity. "2x milk at $3.99" is $7.98. This is the one thing
+ * that would make the number silently 2x wrong, so it is settled and stated in
+ * three places: here, on the input's label, and in the ledger.
+ */
+/**
+ * The live price record for a row, or null — the store's `priceOf` for code
+ * that only has a plain state object.
+ *
+ * ONE COPY, in this module. `view.js` cannot reach the store's closure, so it
+ * genuinely needs its own; what it does not need is two, which is what `counts`
+ * and `itemHTML` each having an inline version would have given, and those are
+ * the two that would drift. `on` is the cleared marker — see `setPrice`, which
+ * carries the receipt for why it is not `by`.
+ */
+function livePrice(state, id) {
+  const r = (state.price || {})[id];
+  if (!r || !r.on) return null;
+  if (typeof r.v !== 'number' || !Number.isInteger(r.v)) return null;
+  if (r.v < 0 || r.v > MAX_PRICE) return null;
+  return r;
+}
+
 export function counts(state, storeId) {
   let total = 0, done = 0;
+  let cents = 0, priced = 0, unpriced = 0, byWeight = 0;
   for (const g of buildGroups(state, storeId)) {
     for (const i of g.items) {
       if (!onTrip(state, i, false)) continue;
       total++;
       if (state.items[i.id]?.s) done++;
+
+      const p = livePrice(state, i.id);
+      if (!p) { unpriced++; continue; }
+      if (p.w) { byWeight++; continue; }        // sold by weight: no total exists
+      const q = state.qty[i.id]?.q;
+      const n = typeof q === 'number' && Number.isInteger(q) && q > 0 ? q : 1;
+      cents += p.v * n;
+      priced++;
     }
   }
-  return { total, done };
+  return { total, done, cents, priced, unpriced, byWeight };
+}
+
+/**
+ * The estimate as a sentence, or '' when there is nothing honest to say.
+ *
+ * THE HONESTY LINE IS ALSO THE PERF FIX. A total that hides what it leaves out
+ * is what pressures somebody into hand-pricing 76 rows to make the number stop
+ * lying - so it always says how many rows it could not include. And it NEVER
+ * renders $0.00: a zero total on a list with things in it reads as "this is
+ * free", when it means "nobody has said what any of this costs".
+ */
+export function estimateLine(c, opts = {}) {
+  if (!c) return '';
+
+  // THE STORE IS NAMED, not gestured at. `counts` walks ONE tab, so this is
+  // what the current store's trolley costs - not the trip - and somebody
+  // reading "About $412" on the Sam's tab of a four-shop list has every reason
+  // to think otherwise. The first cut said "here", which works only for a
+  // reader who has already learned this app's use of the word ("Not stocked
+  // here"); as a trailing fragment on a number it attaches to nothing visible.
+  // The short names already exist in SHOP_POOL, so naming it costs the same
+  // line and needs no learned convention. Omitted on a single-shop list.
+  const where = opts.store ? ` at ${opts.store}` : '';
+
+  // "TAP THE PENCIL", not "tap an item". A row does not open on tap - only the
+  // pencil at the end of the name does (`[data-edit]`), so "tap an item to add
+  // one" sent somebody prodding a row that would never respond. §3 forbids a
+  // dead end, and advice the screen cannot satisfy is one.
+  const how = 'tap the ✎ on a row to add one';
+
+  // BUILT ONCE, APPENDED TO EVERY PATH THAT SHOWS A FIGURE, and that is the
+  // whole point of hoisting it. The first cut assembled this inline on the main
+  // branch only, so the under-a-dollar and free branches dropped the by-weight
+  // count entirely: twelve weighed rows and one 49c item read "Under $1", and
+  // one free sample beside twelve weighed rows read "Free so far". Fixing
+  // "About $0" by adding branches created two new lies in the branches, which
+  // is what happens when the honesty suffix is a property of one path instead
+  // of the function.
+  const bits = [];
+  if (c.unpriced) bits.push(`${c.unpriced} item${c.unpriced === 1 ? '' : 's'} with no price`);
+  if (c.byWeight) bits.push(`${c.byWeight} by weight`);
+  const rest = bits.length ? ` · ${bits.join(' · ')}` : '';
+
+  if (!c.priced) {
+    // Nothing has a number, so there is no figure to show - only an honest
+    // description of why.
+    if (!c.byWeight && !c.unpriced) return '';
+    // EVERYTHING WEIGHED IS NOT "NO PRICES YET": the household priced these,
+    // deliberately, and no action offered could ever clear that message.
+    if (c.byWeight && !c.unpriced) return `${c.byWeight} sold by weight${where} — no total to show`;
+    // MIXED. "No prices yet" is false the moment one row is marked weighed, and
+    // this state is the LIKELY one - ~76 of 84 household rows are unpriced
+    // today, so a single weighed row puts the list here rather than in the pure
+    // case above. Say what is actually true and still offer the action.
+    if (c.byWeight) return `No total yet${where}${rest} — ${how}`;
+    return `No prices yet${where} — ${how}`;
+  }
+
+  // NEVER "About $0", which this function's contract forbids and its first cut
+  // allowed: that guard tested only that SOMETHING was priced, so one 49c item
+  // - or one genuinely free one - rendered "About $0 · 20 items with no price",
+  // which reads as "this trolley is free" and means the opposite.
+  const dollars = Math.round(c.cents / 100);
+  if (c.cents === 0) return `Nothing to pay so far${where}${rest}`;
+  if (dollars < 1) return `Under $1${where}${rest}`;
+  return `About $${dollars.toLocaleString('en-US')}${where}${rest}`;
 }
 
 /* ---------- markup ---------- */
@@ -353,7 +467,13 @@ export function itemHTML(item, state, opts = {}) {
   // stays quiet by default, and always as a stepper so it can be changed in the
   // aisle without hunting for a menu.
   const q = state.qty[item.id]?.q;
-  const qty = typeof q === 'number' ? q : MIN_QTY;
+  // VALIDATED THE SAME WAY `counts` VALIDATES IT. `counts` requires an integer
+  // above zero; this used to accept any number, and the price tag multiplies by
+  // it - so a float `qty` in state would render "$9.97 each $3.99" on the row
+  // while the header total counted 399. Not reachable today (`isWellFormed`
+  // gates `qty` on both the wire and the load path), but two gates that are
+  // supposed to agree and do not is precisely the drift `store.js` warns about.
+  const qty = typeof q === 'number' && Number.isInteger(q) && q > 0 ? q : MIN_QTY;
   const qtyBadge = qty > MIN_QTY ? `<span class="qtybadge">&times;${qty}</span>` : '';
   const stepper = `<span class="qty" role="group" aria-label="How many">`
     + `<button class="qminus" data-qty="${esc(item.id)}" data-delta="-1"`
@@ -361,6 +481,35 @@ export function itemHTML(item, state, opts = {}) {
     + `<span class="qnum" aria-live="polite">${qty}</span>`
     + `<button class="qplus" data-qty="${esc(item.id)}" data-delta="1"`
     + `${qty >= MAX_QTY ? ' disabled' : ''} aria-label="One more">+</button></span>`;
+
+  // WHAT IT COSTS, on the row. Quiet by default: a row with no price says
+  // nothing rather than showing a placeholder, because 18 of the 71 catalogue
+  // lines have never had one and a screen of "—" teaches people to ignore the
+  // column. Shown as the LINE cost when there is more than one, with the
+  // per-unit price beside it, so "2 × $3.99" and "$7.98" are both on screen -
+  // the estimate multiplies by quantity, and a shopper checking the total
+  // against the trolley needs to see that happen rather than trust it.
+  // `.pricetag`, NOT `.price`: `.price` has been the CATALOGUE's estimate
+  // string since long before this feature (`<span class="price">$16.72
+  // $2.98/lb</span>` inside `.det`), styled by the scoped `.det .price`, which
+  // deliberately sets no font-size. A bare `.price` rule here shrank every
+  // catalogue estimate on every row and made it unbreakable - and put two
+  // differently-meaning figures on one line under one class name, one per-unit
+  // and feeding the total, one a pack price that does not.
+  const pr = livePrice(state, item.id);
+  let priceTag = '';
+  if (pr && pr.w) {
+    priceTag = `<span class="pricetag by-weight">by weight</span>`;
+  } else if (pr) {
+    const each = `$${(pr.v / 100).toFixed(2)}`;
+    // The QUANTITY IS NOT RESTATED. At qty 2 the row already carries `×2` on
+    // the name and `2` in the stepper; a third copy inside the price was the
+    // smallest type on screen carrying the figure that most needs to be
+    // unmistakable. The line total leads, the unit price follows.
+    priceTag = qty > MIN_QTY
+      ? `<span class="pricetag">$${((pr.v * qty) / 100).toFixed(2)}<span class="each">each ${each}</span></span>`
+      : `<span class="pricetag">${each}</span>`;
+  }
 
   const whoTag = st && by ? `<span class="who">${esc(by)}</span>` : '';
   const noteRow = (st === 'swap' || st === 'skip') && note
@@ -433,7 +582,7 @@ export function itemHTML(item, state, opts = {}) {
   }
 
   return `<div class="item${item.custom ? ' cust' : ''}${st ? ' ' + st : ''}${flagged ? ' flagged' : ''}" data-id="${esc(item.id)}">`
-    + `<div class="nm">${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${whoTag}${stepper}${removeBtn}</div>`
+    + `<div class="nm">${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${priceTag}${whoTag}${stepper}${removeBtn}</div>`
     + body + flagRow
     + `<div class="acts" role="group" aria-label="${esc(text)}">`
     + `<button class="pxl ${st === 'got' ? 'on-got' : ''}" data-act="got" aria-pressed="${st === 'got'}">Got</button>`

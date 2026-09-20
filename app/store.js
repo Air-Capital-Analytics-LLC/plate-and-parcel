@@ -62,7 +62,12 @@ export const TEXT_SIZES = ['Normal', 'Large', 'Largest'];
 // list-wide setting must never displace a tick on a flapping link (the same
 // argument that put `shops` at the end in v27). It is also one record for the
 // whole list, so it is the cheapest thing here to send last.
-export const KINDS = ['items', 'added', 'plan', 'flags', 'qty', 'shops', 'sweep'];
+export const KINDS = ['items', 'added', 'plan', 'flags', 'qty', 'price', 'shops', 'sweep'];
+
+/** A price is per-unit cents. 0 is a legitimate value ("free"); the cap is a
+ *  sanity bound, not a business rule - it exists so a mistyped or hostile
+ *  record cannot turn a $555 trip into a six-figure one on screen. */
+export const MAX_PRICE = 100000;              // $1,000.00 per unit
 
 /**
  * The shops a list can choose from.
@@ -220,6 +225,29 @@ export function isWellFormed(rec, kind) {
     // this file - `cat` has only ever been written as `1`, so no existing
     // record on any phone is dropped by this.
     if (rec.cat !== undefined && rec.cat !== 0 && rec.cat !== 1) return false;
+  } else if (kind === 'price') {
+    // ITS OWN KIND, not a field on `added`, and the reasons are measured rather
+    // than stylistic. `upsertAdded` writes `del:false` unconditionally, so
+    // pricing a removed item would RESURRECT it for everyone; it returns false
+    // for an untouched catalogue row, which is the commonest case; it defaults
+    // `store:'sams'`, which would teleport Costco rows; and it spreads `cur`,
+    // so clearing a mistyped 399 would silently leave 399 behind. Perf put a
+    // number on the alternative too: ~76 of 84 rows need hand-pricing, each
+    // manufacturing a ~280 B sealed override, ~+21 KB per root snapshot. The
+    // precedent is already here - `qty` got its own record so ticking Got could
+    // not clobber a number somebody had just changed.
+    //
+    // INTEGER CENTS. A float here is a total that is wrong by a penny and
+    // cannot be explained. NaN renders the whole tab as NaN, and a negative
+    // makes a $555 trip read $55 - which is the dangerous one, because nothing
+    // looks broken.
+    //
+    // The key is `v`, NOT `p`: `plan` records already use `p`.
+    if (typeof rec.v !== 'number' || !Number.isInteger(rec.v)) return false;
+    if (rec.v < 0 || rec.v > MAX_PRICE) return false;
+    if (rec.w !== undefined && typeof rec.w !== 'boolean') return false;
+    if (typeof rec.on !== 'boolean') return false;
+    if (!isStr(rec.by)) return false;
   } else if (kind === 'sweep') {
     // One record per list, id `all`, holding the logical-clock value the list
     // was emptied at. `0` means "not emptied" - the undo is a VALUE, not an
@@ -260,6 +288,7 @@ export function createStore({ ns = 'household' } = {}) {
     added: Object.create(null),   // addedId -> {name, note, store, by, del, t, c}
     plan:  Object.create(null),   // itemId -> {p, t, c}        on this trip?
     qty:   Object.create(null),   // itemId -> {q, t, c}        how many (1 = unset)
+    price: Object.create(null),   // itemId -> {v, w, by, t, c}  per-unit cents; w = by weight
     flags: Object.create(null),   // "<itemId>@<store>" -> {f, by, t, c}  not stocked here
     shops: Object.create(null),   // shopId -> {on, label, t, c}  which shops this list uses
     sweep: Object.create(null),   // "all" -> {at, t, c}        emptied at this clock value (0 = not)
@@ -858,6 +887,85 @@ export function createStore({ ns = 'household' } = {}) {
 
   function bumpQty(itemId, delta) { return setQty(itemId, getQty(itemId) + delta); }
 
+  /* ---- what it costs: per-unit cents, entered by a human ---- */
+
+  /**
+   * The LIVE price record, or null.
+   *
+   * Null covers both "nobody has said" and "somebody took it off" - callers
+   * never need to tell those apart, and every one of them was previously
+   * asking `priceOf` and `isPriced` in pairs and re-deriving the same answer.
+   * A record rather than a bare number because `w` (by weight) has to come
+   * back with it, and because 0 is a real price that a number cannot
+   * distinguish from absence.
+   */
+  function priceOf(itemId) {
+    const r = state.price[itemId];
+    if (!r || !r.on) return null;
+    if (typeof r.v !== 'number' || !Number.isInteger(r.v)) return null;
+    if (r.v < 0 || r.v > MAX_PRICE) return null;
+    return r;
+  }
+
+  /**
+   * Set, or clear with `null`.
+   *
+   * PER UNIT, decided 2026-09-19 and not to be re-litigated: "2x milk $3.99" is
+   * $7.98, and the estimator multiplies by `qty`. This is the one thing that
+   * would have made every total silently 2x wrong, so it is settled - and it
+   * obliges the input to be labelled "each" ON SCREEN rather than left to be
+   * inferred.
+   *
+   * CLEARING IS A RECORD, not a deletion - the rules refuse deletes, so
+   * removing a mistyped price has to be expressible as data like everything
+   * else here. It cannot be `v:0` alone, because zero is a legitimate price
+   * ("free", and the household list has samples on it).
+   *
+   * THE MARKER IS `on`, AN EXPLICIT BOOLEAN, and the first cut of this got it
+   * wrong in a way worth recording. It used `by:''`, reasoning that a real
+   * price always carries the name of whoever typed it, so an empty author IS
+   * the cleared state. But `me.name` defaults to `''` and the "Who are you?"
+   * sheet can be dismissed by tapping the backdrop - so a member who skipped it
+   * typed 3.99 and wrote a record that read as CLEARED: the row showed nothing,
+   * the estimate counted it missing, no toast. Worse, the record still synced,
+   * and LWW made it a tombstone that wiped whatever price somebody else had
+   * typed on another phone.
+   *
+   * LOAD-BEARING STATE MUST NOT BE DERIVED FROM A FIELD THE USER MAY LEAVE
+   * BLANK. `by` means "who did this" in `items`, `added` and `flags`, and in
+   * all three it is attribution that nothing branches on; `price` was the first
+   * kind to make it control flow. `shops` already uses `{on:boolean}` and
+   * `sweep`'s comment makes the identical argument - "a VALUE, not an absence,
+   * because the rules refuse deletes and an absence cannot merge". This matches
+   * both, and `by` goes back to meaning only who typed it.
+   */
+  function setPrice(itemId, cents, byWeight = false) {
+    if (cents === null || cents === undefined) {
+      state.price[itemId] = stamp({ v: 0, w: false, on: false, by: '' });
+      state.outbox[obKey('price', itemId)] = 'price';
+      persist();
+      emit({ type: 'price', id: itemId });
+      return null;
+    }
+    // REFUSED, NOT COERCED. `Math.round(Number(cents) || 0)` turned NaN into 0
+    // WITH an author attached - which reads as "genuinely free", the worst
+    // available interpretation of "something went wrong". `Infinity` became
+    // MAX_PRICE and `-500` became 0, both silently. This is an exported method
+    // whose sibling `isWellFormed` hard-rejects every one of those values, so
+    // it has no business inventing one. `main.js` gates all of it already; this
+    // keeps the contract true for any later caller.
+    const n = Math.round(Number(cents));
+    if (!Number.isFinite(n) || n < 0 || n > MAX_PRICE) return undefined;
+    state.price[itemId] = stamp({ v: n, w: !!byWeight, on: true, by: state.me.name });
+    state.outbox[obKey('price', itemId)] = 'price';
+    persist();
+    emit({ type: 'price', id: itemId });
+    return n;
+  }
+
+  /** True when a human has actually said what this costs. */
+  function isPriced(itemId) { return !!priceOf(itemId); }
+
   /* ---- not stocked here: a correction to the list, not a trip outcome ---- */
 
   function isFlagged(itemId, storeId) { return !!state.flags[flagKey(itemId, storeId)]?.f; }
@@ -1189,6 +1297,7 @@ export function createStore({ ns = 'household' } = {}) {
     emptyList, unemptyList, sweptAt, clearAllMarks, setUI, setName,
     hasPlan, isPlanned, setPlanned, clearPlan, replanFromLastTrip,
     getQty, setQty, bumpQty,
+    priceOf, setPrice, isPriced,
     isFlagged, flagInfo, setFlag, setShop, parseList, importItems,
     mergeRemote, pendingOps, ackOps, pendingCount, requeueAll, restampPending,
     flushPersist, isPersistBroken, takeDroppedWork, takeBlobUnreadable, reset, wins, isWellFormed,

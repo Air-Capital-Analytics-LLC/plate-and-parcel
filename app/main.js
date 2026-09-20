@@ -325,6 +325,19 @@ function repaint() {
   $('pright').textContent = planning
     ? 'Tick what you need this time'
     : `${c.done} of ${c.total} handled · ${pct}%`;
+  // ITS OWN ROW, not appended to `pright`. At the Largest text setting that
+  // line is already near the width of a 320px phone, and a total that wraps
+  // into the progress count is unreadable by exactly the people the setting
+  // exists for. Hidden entirely while planning - "Choose what to buy" is about
+  // what is on the trip, and a cost for a list you are still deciding is noise.
+  // The store's own short name, not "here": one fewer convention to learn, and
+  // it is already on the tab the reader is looking at. Only when there is more
+  // than one shop — on a single-shop list there is nothing to disambiguate.
+  const estLine = planning ? '' : View.estimateLine(c, {
+    store: shops.length > 1 ? (shops.find((x) => x.id === s.ui.store) || {}).short : '',
+  });
+  $('pest').textContent = estLine;
+  $('pest').hidden = !estLine;
   listEl.innerHTML = View.listHTML(s, { planning });
   document.body.classList.toggle('planning', planning);
   $('planBtn').textContent = planning ? '✓ Done — back to shopping' : '✎ Choose what to buy';
@@ -523,6 +536,28 @@ function openAdd() {
 let editId = null;
 let editStore = 'sams';
 let editCat = false;
+/** Sold by weight, so no per-unit price exists and none may be typed. */
+let editByWeight = false;
+
+/**
+ * Put the price box and its hint into whatever state `editByWeight` says.
+ *
+ * ONE FUNCTION, called from both `openEdit` and the toggle, because when they
+ * were separate they disagreed - `openEdit` set `disabled` and left the hint
+ * from whatever item was open last.
+ *
+ * DISABLED, NOT CLEARED: turning it off again gives the number back rather than
+ * eating what was typed, since somebody may toggle it just to see what it does.
+ * `saveEdit` ignores the box while the toggle is on, so a stale value cannot be
+ * stored.
+ */
+function applyByWeight() {
+  $('editPrice').disabled = editByWeight;
+  $('editPrice').placeholder = editByWeight ? '' : 'e.g. 3.99';
+  $('editPriceHint').textContent = editByWeight
+    ? 'The till weighs this one, so there is no price to type. It is counted separately, not left out.'
+    : 'Adds to the running total for this store.';
+}
 
 function openEdit(id) {
   if (blockedWhileLocked()) return;
@@ -537,6 +572,24 @@ function openEdit(id) {
   editStore = a?.store || row.store;
   $('editName').value = row.name || '';
   $('editNote').value = (a ? a.note : '') || '';
+  // SEEDED FROM THE RECORD, not from the catalogue's `est` string. The roadmap
+  // is explicit that a price is never auto-derived: `est` is Sam's-only, so it
+  // prices the wrong product on a Costco-only line, and it mixes pack totals
+  // with per-lb rates ("$16.72  $2.98/lb", "$5.56/lb") - a parser reading the
+  // wrong one of those under-prices the row and nothing looks broken. Suggest,
+  // human accepts; and until somebody accepts, this box is empty.
+  const p = store.priceOf(id);
+  $('editPrice').value = p && !p.w ? (p.v / 100).toFixed(2) : '';
+  editByWeight = !!(p && p.w);
+  $('editByWeight').setAttribute('aria-pressed', String(editByWeight));
+  // THROUGH THE SAME HELPER the toggle uses. This used to set `disabled` here
+  // and the hint only in the click handler, so two states were reachable that
+  // both lied: a by-weight row opened with a greyed, dead box under a hint
+  // saying it feeds the estimate; and toggling it on for one item then opening
+  // another left "the till works this one out" beside an empty, editable box.
+  // The app was telling the user, in plain words, something false about the
+  // item in front of them.
+  applyByWeight();
   $('editFromCat').hidden = !editCat;
   $('editDelete').textContent = editCat
     ? '\u232b Take off this list'
@@ -548,9 +601,45 @@ function openEdit(id) {
   openSheet('editSheet');
 }
 
+/**
+ * "3.99" / "$3.99" / "3,99" / "3" -> 399 cents. '' -> null (cleared).
+ * Anything else -> undefined, which the caller reports rather than guessing.
+ *
+ * DELIBERATELY STRICT about what it accepts and loud about what it does not.
+ * A price that silently becomes something else is the defect this whole feature
+ * is most exposed to: §0's ruling is that a wrong total which looks right is
+ * worse than no total. "1 2 3" and "3.999" are refused rather than rounded into
+ * a number nobody typed.
+ */
+function parsePrice(raw) {
+  const s = String(raw || '').trim().replace(/^\$/, '').replace(',', '.');
+  if (!s) return null;
+  if (!/^\d{1,6}(\.\d{1,2})?$/.test(s)) return undefined;
+  const cents = Math.round(Number(s) * 100);
+  if (!Number.isFinite(cents) || cents < 0) return undefined;
+  // REFUSED HERE, not clamped in the store. The two bounds did not agree: this
+  // regex accepts up to $999,999.99 and `setPrice` clamped to MAX_PRICE, so
+  // typing 1200.00 for a mattress stored $1,000.00 and said nothing - the row,
+  // the sheet and the estimate all read $1,000 while $200 had vanished. Sam's
+  // and Costco genuinely sell things over $1,000, and §0's ruling is that a
+  // wrong total which looks right is worse than no total. The clamp stays in
+  // `setPrice` as the untrusted-input backstop it was always meant to be; this
+  // is the path a human watches, and it has to be loud.
+  if (cents > Store.MAX_PRICE) return undefined;
+  return cents;
+}
+
 function saveEdit() {
   const name = $('editName').value.trim();
   if (!name) { toast('Give it a name first'); return; }
+  // CHECKED BEFORE ANYTHING IS WRITTEN. `upsertAdded` below is the destructive
+  // half of this function; refusing a bad price after it has run would leave
+  // the name saved and the price silently dropped.
+  const cents = editByWeight ? null : parsePrice($('editPrice').value);
+  if (cents === undefined) {
+    toast('Write the price like 3.99, up to 1000');
+    return;
+  }
   const was = store.state.added[editId]?.store
     ?? View.findItem(store.state, editId)?.store;
   const moved = was !== editStore;
@@ -560,6 +649,18 @@ function saveEdit() {
     toast('That item is already gone');
     closeSheet('editSheet');
     return;
+  }
+  // AFTER the row is known to exist, and only when it changed. Its own KIND, so
+  // it cannot clobber a `qty` somebody bumped on the other side of the shop -
+  // the same argument that gave `qty` its own record.
+  // `priceOf` returns null for a cleared price as well as an absent one, so
+  // the old `isPriced` + `priceOf` pair re-deriving the same answer is gone.
+  const p = store.priceOf(editId);
+  const wasWeight = !!(p && p.w);
+  const wasCents = p && !p.w ? p.v : null;
+  if (editByWeight !== wasWeight || (!editByWeight && cents !== wasCents)) {
+    if (editByWeight) store.setPrice(editId, 0, true);
+    else store.setPrice(editId, cents, false);
   }
   closeSheet('editSheet');
   // Moving an item to another shop hides it from the tab you are looking at,
@@ -1721,6 +1822,11 @@ function wireEvents() {
     editStore = b.dataset.editstore;
     for (const x of $('editStore').children) x.classList.toggle('on', x === b);
   });
+  $('editByWeight').onclick = () => {
+    editByWeight = !editByWeight;
+    $('editByWeight').setAttribute('aria-pressed', String(editByWeight));
+    applyByWeight();
+  };
   $('addStore').addEventListener('click', (e) => {
     const b = e.target.closest('[data-addstore]');
     if (!b) return;
