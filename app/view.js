@@ -23,6 +23,21 @@ export const flagKey = (itemId, storeId) => itemId + '@' + storeId;
  * have no tabs, no place to file anything, and no way back. Falling to the
  * legacy three is the recoverable answer.
  */
+/**
+ * What this list has CHOSEN — not what it currently shows.
+ *
+ * `shopsFor` adds back any store that still holds items, so a store can appear
+ * as a tab while being switched off. The settings editor must seed itself from
+ * this instead: seeding from `shopsFor` made a switched-off store come back
+ * looking chosen, and saving again would have silently turned it on again,
+ * undoing a decision the person had just made and been warned about.
+ */
+export function chosenShopIds(state) {
+  const recs = state?.shops || {};
+  const picked = SHOP_POOL.filter((s) => recs[s.id] && recs[s.id].on === true).map((s) => s.id);
+  return picked.length ? picked : [...LEGACY_SHOPS];
+}
+
 export function shopsFor(state) {
   const recs = state?.shops || {};
   const chosen = SHOP_POOL.filter((s) => recs[s.id] && recs[s.id].on === true);

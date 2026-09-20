@@ -206,6 +206,30 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 /* Shop chips in the new-list sheet. Wraps, because seven of them will not sit
    in a row on a 320px phone - and unlike the tab strip this one is allowed to
    take two lines: it is read once, standing still, not tapped mid-aisle. */
+/* A list row and its settings button, side by side. The row keeps the whole
+   width it had; the button is fixed so a long list name cannot squeeze it to
+   nothing. */
+.listrowwrap{display:flex; gap:6px; align-items:stretch; margin-bottom:8px;}
+.listrowwrap .listrow{flex:1; margin-bottom:0; min-width:0;}
+.listcog{flex-shrink:0; padding:0 14px; font-size:.78rem; font-weight:700;
+  color:var(--muted); --fill:var(--panel2);}
+.lname{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+/* Shown only on a row this phone has renamed - see renderLists. Mono, because
+   it is the literal text inside the link and it has to be compared character
+   by character against something somebody was texted. */
+/* Lives in the WRAPPER, under the row, not inside the row's flex line.
+   `.listrow` is `display:flex; align-items:center` with no wrap, so a
+   width:100% block inside it became a third flex item squeezed between the
+   name and the tag - a mono fragment mid-row that reads as corruption. */
+.listrowwrap{flex-wrap:wrap;}
+/* `flex:0 0 100%`, not `1 1 100%`. With shrink:1 it still gets squeezed onto
+   the first line when space is tight, which is the whole defect. And the
+   settings button must not stretch across the new second row. */
+.listrowwrap .linkid{flex:0 0 100%; order:9;}
+.listrowwrap .listcog{align-self:flex-start;}
+.linkid{display:block; margin-top:3px; font-size:.72rem; color:var(--muted);
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .shoppick{display:flex; flex-wrap:wrap; gap:6px;}
 .shoppick button{padding:10px 12px; font-size:.82rem; font-weight:600;
   color:var(--muted); --fill:var(--panel2);}
@@ -367,6 +391,10 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
    timing out - it is about work that is gone for good, which is not a
    2.1-second fact. Sized in rem like everything readable, so the text-size
    control reaches it. */
+/* A real break between Save and the one control that removes something. They
+   were 14px apart with the red one full-width directly under the halved Save
+   button, and the thumb arrives there already moving. */
+.sep{border:none; border-top:1px solid var(--line); margin:18px 0 0;}
 .lostbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
 .lostbar span{flex:1 1 60%; min-width:180px;}
 .lostbar button{padding:9px 16px; font-size:.82rem; font-weight:700;
@@ -688,12 +716,50 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div id="listsBody"></div>
   <div class="hint">Lists are completely separate — their own items, their own
     passphrase, their own people. This phone only shows lists it has been given
-    a link to.</div>
+    a link to. <b>The names here are this phone&rsquo;s own</b> — another phone may
+    call the same list something else.</div>
   <div class="row" style="margin-top:12px">
     <button id="listsShare">Share this list</button>
     <button class="primary" id="listsNew">Start a new list</button>
   </div>
   <div class="row" style="margin-top:8px"><button data-close="listsSheet">Close</button></div>
+</div></div>
+
+<div class="sheet-bg" id="listEditSheet"><div class="sheet">
+  <h2>Settings for this list</h2>
+
+  <div class="fld"><label>What this list is called <b>on this phone</b></label>
+    <input id="listEditName" autocomplete="off" maxlength="40">
+    <div class="hint">Only this phone sees this name. If you tell somebody to look
+      for it, tell them the name in the link instead &mdash;
+      <span class="linkid" id="listEditLink"></span></div></div>
+
+  <div class="fld" id="listEditShopsWrap">
+    <label>Which stores this list goes to</label>
+    <div class="shoppick" id="listEditShops"></div>
+    <div class="hint" id="listEditShopsOther" hidden>To change which stores this
+      list goes to, switch to it first &mdash; tap it in <b>My lists</b>.</div>
+    <div class="hint">These tabs are what everybody sees, on every phone.</div>
+    <div class="hint" id="listEditShopHint"></div></div>
+
+  <div class="fld" id="listEditCustomWrap" hidden><label>What is the other store called?</label>
+    <input id="listEditCustomName" autocomplete="off" maxlength="24">
+    <div class="hint">Keep it short &mdash; it has to fit on a tab.</div></div>
+
+  <div class="warnbox" id="listEditOrphan" hidden></div>
+
+  <div class="row" style="margin-top:12px">
+    <button data-close="listEditSheet">Cancel</button>
+    <button class="primary" id="listEditSave">Save</button>
+  </div>
+
+  <hr class="sep">
+  <div class="fld" style="margin-top:18px">
+    <button class="wide danger" id="listEditForget">&#9003; Take this list off this phone</button>
+    <div class="hint" id="listEditForgetWhy">Nothing is deleted. The list stays
+      where it is and the link still works &mdash; open the link again to get it
+      back. The other phones do not notice.</div>
+  </div>
 </div></div>
 
 <div class="sheet-bg" id="newListSheet"><div class="sheet">
@@ -711,7 +777,8 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
   <div class="err" id="newListErr"></div>
   <div class="hint">It starts <b>empty</b> — add things yourself or paste a list in.
     You will set its own passphrase, and only people you send the link to can see it.
-    <b>The stores are set now and cannot be changed yet</b> — if you get it wrong, start the list again.</div>
+    <b>You can change the stores later</b> — Menu &rarr; My lists &rarr; Settings
+    on this list. That changes the tabs for everyone, the same as picking them here.</div>
   <div class="row" style="margin-top:12px">
     <button data-close="newListSheet">Cancel</button>
     <button class="primary" id="newListGo">Create</button>

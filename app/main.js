@@ -86,7 +86,7 @@ const LIST_ID = RESOLVED || DEFAULT_LIST;
 function knownLists() {
   const reg = readLocal(LISTS_KEY, null);
   const out = (reg && typeof reg === 'object' && !Array.isArray(reg)) ? { ...reg } : {};
-  if (!out[DEFAULT_LIST]) out[DEFAULT_LIST] = { label: 'Household', at: 0 };
+  if (!out[DEFAULT_LIST]) out[DEFAULT_LIST] = { label: prettify(DEFAULT_LIST), at: 0 };
   return out;
 }
 
@@ -99,11 +99,38 @@ function listLabel(id = LIST_ID) {
   return (rec && rec.label) || prettify(id);
 }
 
-function rememberList(id, label) {
+/**
+ * "I am looking at this list." Records the visit AND makes it the one the
+ * home-screen icon opens.
+ */
+function noteVisit(id, label) {
   const reg = knownLists();
   reg[id] = { label: label || reg[id]?.label || prettify(id), at: Date.now() };
   writeLocal(LISTS_KEY, reg);
   writeLocal(LAST_KEY, id);
+}
+
+/**
+ * Change what THIS PHONE calls a list. Deliberately NOT `noteVisit`.
+ *
+ * The two were one function, and the difference is a defect waiting on the
+ * rename feature: `noteVisit` also writes `pnp.lastList`, which is what the
+ * bare URL and the home-screen icon resolve to. Renaming "Beach" from inside
+ * the Household list would therefore have quietly re-pointed the parents' icon
+ * at Beach, with nothing on screen having said so.
+ */
+function setListLabel(id, label) {
+  const reg = knownLists();
+  const name = String(label || '').trim().slice(0, 40);
+  reg[id] = { ...(reg[id] || {}), label: name || prettify(id), at: reg[id]?.at || 0 };
+  writeLocal(LISTS_KEY, reg);
+}
+
+/** Has this phone given the list a name of its own, or is it still the one
+ *  derived from the link? Drives whether the row needs to show the link. */
+function isRenamed(id) {
+  const rec = knownLists()[id];
+  return !!(rec && rec.label && rec.label !== prettify(id));
 }
 
 /**
@@ -492,15 +519,352 @@ function renderLists() {
   const ids = Object.keys(reg).sort((a, b) => (reg[b].at || 0) - (reg[a].at || 0));
   $('listsBody').innerHTML = ids.map((id) => {
     const here = id === LIST_ID;
-    return `<button class="wide listrow${here ? ' on' : ''}" data-switch="${View.esc(id)}">`
-      + `${View.esc(reg[id].label || id)}`
+    // The link is shown ONLY when this phone has renamed the list. On an
+    // untouched list the row would read "Household" with "household" beneath
+    // it - the same word twice, which reads as a fault to somebody who
+    // struggles with phones and generates the exact question the line exists
+    // to answer. Shown, it is what lets two phones calling the same list
+    // different things work out that it IS the same list.
+    const renamed = isRenamed(id);
+    // The link line is a SIBLING of the row button, not a child of it.
+    //
+    // Inside the button it could never render underneath: `.listrow` is
+    // `display:flex; align-items:center` with no wrap, so a `width:100%` block
+    // became a squeezed third item on the same line - a mono fragment mid-row
+    // that reads as corruption. Putting `flex-wrap` on the WRAPPER did not help
+    // either, because that governs the wrapper's own children, not the button's.
+    // Out here the wrapper's `flex-wrap` is the rule that actually applies.
+    // LEDGER M3 is the receipt for measuring this rather than asserting it -
+    // which this line has now been guilty of twice.
+    return `<div class="listrowwrap">`
+      + `<button class="wide listrow${here ? ' on' : ''}" data-switch="${View.esc(id)}">`
+      + `<span class="lname">${View.esc(reg[id].label || id)}</span>`
       + (here ? '<span class="tag">you are here</span>' : '')
       + (id === DEFAULT_LIST ? '<span class="tag dim">shopping list</span>' : '')
-      + `</button>`;
+      + `</button>`
+      + `<button class="pxl listcog" data-listcog="${View.esc(id)}"`
+      + ` aria-label="Settings for ${View.esc(reg[id].label || id)}">Settings</button>`
+      + (renamed ? `<span class="linkid">in the link: ${View.esc(id)}</span>` : '')
+      + `</div>`;
   }).join('');
 }
 
+/* ---- one list's settings: its name here, its stores, and forgetting it ---- */
+
+let editListId = null;
+let editListPick = new Set();
+
+/**
+ * Stores that currently hold something on this list, and whether what they
+ * hold is rescuable.
+ *
+ * Counts what the TAB ACTUALLY RENDERS, not `added` records. Scanning `added`
+ * was blind to the catalogue - which is the whole household list - so turning
+ * Sam's off there fired no warning at all and took ~58 rows out of the tabs,
+ * the counts and the trip export, behind a warning box built to promise that
+ * could not happen.
+ *
+ * Returns BOTH halves separately, because they are not exclusive and treating
+ * them as such defers a silent loss. `shopsFor` gives a tab back to a store
+ * holding live `added` records; it cannot do that for catalogue rows. One
+ * edited or added row on Sam's is enough to make "rescued" true - and a single
+ * boolean then printed only the reassuring sentence and swallowed the fact that
+ * 58 catalogue rows were about to vanish. Worse, the loss then lands LATER and
+ * unannounced: delete that one added row weeks afterwards, `shopsFor` stops
+ * rescuing the store, and the tab and every catalogue row on it disappear from
+ * four phones with no connection to anything anybody just did.
+ */
+function storesHolding() {
+  const out = new Map();
+  for (const s of Store.SHOP_POOL) {
+    const rows = View.buildGroups(store.state, s.id).reduce((n, g) => n + g.items.length, 0);
+    if (!rows) continue;
+    const added = Object.keys(store.state.added)
+      .filter((id) => { const a = store.state.added[id]; return a && !a.del && a.store === s.id; }).length;
+    // What survives being switched off, and what does not.
+    out.set(s.id, { rows, added, catalogue: Math.max(0, rows - added) });
+  }
+  return out;
+}
+
+function renderListEditShops() {
+  const held = storesHolding();
+  // The list's OWN names, not the pool defaults. A list that called its custom
+  // store "Bait shop" showed a tab reading Bait shop and a chip reading Other,
+  // which is the one rule `shopsFor` states outright: a name somebody typed
+  // replaces both forms.
+  const named = new Map(View.shopsFor(store.state).map((x) => [x.id, x.short]));
+  $('listEditShops').innerHTML = Store.SHOP_POOL.map((sh) => {
+    const on = editListPick.has(sh.id);
+    return `<button type="button" data-lshop="${View.esc(sh.id)}" class="pxl${on ? ' on' : ''}">`
+      + `${View.esc(named.get(sh.id) || sh.short)}</button>`;
+  }).join('');
+
+  const n = editListPick.size;
+  // One hint, both facts. A bare middle dot on the chip was the first attempt
+  // and it is this app's SEPARATOR everywhere else ("12 of 40 handled · 30%"),
+  // so on a chip it read as dangling punctuation rather than a badge - and a
+  // screen reader says "middle dot" or nothing at all.
+  const busy = [...held.keys()].map((id) => named.get(id) || id);
+  const count = n === 0
+    ? 'Pick at least one store.'
+    : n < MAX_SHOPS
+      ? `${n} store${n === 1 ? '' : 's'} — one tab each.`
+      : `${MAX_SHOPS} stores — that is all that fits across the top.`;
+  // "a, b and c", not "a and b and c".
+  const list = busy.length > 1
+    ? busy.slice(0, -1).join(', ') + ' and ' + busy[busy.length - 1]
+    : busy[0];
+  $('listEditShopHint').textContent = busy.length
+    ? `${count} ${list} ${busy.length === 1 ? 'has' : 'have'} things on ${busy.length === 1 ? 'it' : 'them'} right now.`
+    : count;
+  $('listEditCustomWrap').hidden = !editListPick.has('custom');
+
+  // Name what turning a store off would actually do, before they tap Save.
+  const losing = [...held.keys()].filter((id) => !editListPick.has(id));
+  const box = $('listEditOrphan');
+  if (!losing.length) { box.hidden = true; box.textContent = ''; return; }
+  const parts = losing.map((id) => {
+    const label = named.get(id) || id;
+    const info = held.get(id);
+    const bits = [];
+    // BOTH sentences when both apply. "Ticked off" is deliberately not said:
+    // `shopsFor` keys the rescue on the record not being deleted, and ticking a
+    // row Got leaves the record exactly where it was. The tab goes when the
+    // thing is removed or moved, which is what this now promises.
+    if (info.added) {
+      bits.push(`<b>${View.esc(label)}</b> still has `
+        + `${info.added} thing${info.added === 1 ? '' : 's'} you added, so its tab stays `
+        + `until ${info.added === 1 ? 'it is' : 'they are'} removed or moved to another store.`);
+    }
+    if (info.catalogue) {
+      bits.push(`${info.added ? 'It also has' : `<b>${View.esc(label)}</b> has`} `
+        + `<b>${info.catalogue}</b> thing${info.catalogue === 1 ? '' : 's'} built into the list, `
+        + `and ${info.catalogue === 1 ? 'that' : 'those'} <b>disappear from view</b> `
+        + `until you turn it back on.`);
+    }
+    return bits.join(' ');
+  });
+  box.hidden = false;
+  box.innerHTML = parts.join(' ') + ' Nothing is deleted either way, and nothing moves on its own.';
+}
+
+function openListEdit(id) {
+  // A cached older index.html against this main.js has no settings sheet, and
+  // `renderLists` emits the button regardless because `listsBody` is old. Bail
+  // rather than throw inside the click handler and do nothing at all. LEDGER V8.
+  // FIRST, because "Reopen the app to use this" is actionable and the lock
+  // message below is not.
+  if (!$('listEditSheet')) { toast('Reopen the app to use this'); return; }
+  // Guard the BRANCH THAT NEEDS THE KEY, not the sheet. M21's ruling - a guard
+  // on the escape hatch is a trap - applies one door along from where it was
+  // written: for another list this sheet only renames it or takes it off this
+  // phone, both pure localStorage, neither reading a byte of sealed data. A
+  // phone stranded offline on a list it has never unlocked could otherwise
+  // reach My lists (correctly open) and then be told "Enter the passphrase
+  // first" when it tries to tidy that very list away. There is no passphrase
+  // box on that screen. Only the store editor touches sealed content, and it
+  // is the `mine` branch below.
+  if (id === LIST_ID && blockedWhileLocked()) return;
+  editListId = id;
+  const reg = knownLists();
+  $('listEditName').value = reg[id]?.label || prettify(id);
+  $('listEditLink').textContent = id;
+
+  // Stores are synced per list, so they can only be edited for the list this
+  // device actually has unlocked — another list's records are not in memory.
+  const mine = id === LIST_ID;
+  // The block STAYS, with words in it. Hiding it outright meant the sheet for
+  // another list was a name box and a red button, with no hint that stores are
+  // a thing at all - while the forget button, hidden in the mirror case, gets a
+  // full sentence explaining itself. Two opposite conventions in one sheet, and
+  // the silent one is §1's "never silently do nothing".
+  $('listEditShopsWrap').hidden = false;
+  $('listEditShops').hidden = !mine;
+  $('listEditShopsOther').hidden = mine;
+  $('listEditCustomWrap').hidden = true;
+  $('listEditOrphan').hidden = true;
+  if (mine) {
+    // The CHOICE, not the effective tab list. `shopsFor` adds back stores that
+    // still hold items, so seeding from it showed a switched-off store as
+    // chosen — and the next Save would have turned it back on, silently
+    // reversing a decision the person had just been warned about and made.
+    // If the creation-time pick has not landed yet - a dead link means the
+    // empty snapshot that applies it never arrived - seed from the PARK, not
+    // from the legacy fallback. Otherwise the sheet shows Sam's/Costco/Other
+    // ticked for a list somebody chose Target and Aldi for ten minutes ago,
+    // and tapping Save writes that lie in and silently discards the choice.
+    const parked = readLocal(NEWSHOPS_KEY(id), null);
+    editListPick = (!Object.keys(store.state.shops).length && parked && Array.isArray(parked.ids) && parked.ids.length)
+      ? new Set(parked.ids.filter((x) => Store.SHOP_IDS.includes(x)))
+      : new Set(View.chosenShopIds(store.state));
+    const custom = store.state.shops.custom;
+    const parkedName = (!custom && parked && parked.customName) ? String(parked.customName) : '';
+    $('listEditCustomName').value = (custom && custom.label) || parkedName;
+    renderListEditShops();
+  }
+
+  // The list you are standing in cannot be taken off this phone from inside
+  // itself: it would be re-added by the next paint and read as the app
+  // ignoring the tap. The household list is the one the bare link resolves to.
+  const forgettable = !mine && id !== DEFAULT_LIST;
+  $('listEditForget').hidden = !forgettable;
+  $('listEditForgetWhy').textContent = forgettable
+    ? 'Nothing is deleted. The list stays where it is and the link still works — open the link again to get it back. The other phones do not notice.'
+    : mine
+      ? 'You are in this list, so it cannot be taken off this phone from here. Switch to another list first.'
+      : 'The shopping list always stays on this phone.';
+  $('listEditForgetWhy').hidden = false;
+
+  closeSheet('listsSheet');
+  openSheet('listEditSheet');
+  setTimeout(() => $('listEditName').focus(), 150);
+}
+
+function toggleListShop(id) {
+  if (editListPick.has(id)) { editListPick.delete(id); renderListEditShops(); return; }
+  if (editListPick.size >= MAX_SHOPS) {
+    renderListEditShops();
+    $('listEditShopHint').textContent =
+      `${MAX_SHOPS} is the most that fits across the top. Turn one off to pick another.`;
+    return;
+  }
+  editListPick.add(id);
+  renderListEditShops();
+}
+
+function saveListEdit() {
+  const id = editListId;
+  if (!id) return;
+  const mine = id === LIST_ID;
+  let touchedShops = false;
+  if (mine && !editListPick.size) {
+    $('listEditShopHint').textContent = 'Pick at least one store.';
+    return;
+  }
+  setListLabel(id, $('listEditName').value);
+
+  if (mine) {
+    // Write every store in the pool, on or off, so turning one OFF is a real
+    // record that reaches the other phones rather than an absence they cannot
+    // tell from "never chose".
+    const customName = $('listEditCustomName').value.trim().slice(0, Store.MAX_SHOP_LABEL);
+    for (const s of Store.SHOP_POOL) {
+      const on = editListPick.has(s.id);
+      const cur = store.state.shops[s.id];
+      const label = s.id === 'custom' ? customName : (cur?.label || '');
+      if (cur && !!cur.on === on && String(cur.label || '') === label) continue;  // unchanged
+      store.setShop(s.id, { on, label });
+      touchedShops = true;
+    }
+    sync?.drain();
+  }
+
+  editListId = null;
+  closeSheet('listEditSheet');
+  render();
+  renderLists();
+  openSheet('listsSheet');
+  // The name is this phone's; the stores are everybody's. One tap can commit
+  // both, so the toast has to say which one just reached other people - §1,
+  // anything beyond the tapping device says so, in those words.
+  toast(touchedShops ? `Saved — the tabs change on everybody's phone` : 'Saved');
+}
+
+/** Every per-list key, derived in ONE place. `keyFor` builds these for the
+ *  current list only, so forgetting another list needs the same list by id -
+ *  and a hand-copied duplicate is how the two drift. */
+function perListKeys(id) {
+  // `lsKey` comes from store.js, which owns that prefix. Copying the literal
+  // here is how the two drift, and the drift is silent.
+  return [`pnp.pass:${id}`, `pnp.salt:${id}`, `pnp.check:${id}`,
+          `pnp.installed:${id}`, `pnp.newshops:${id}`, Store.lsKey(id)];
+}
+
+/** How much work on that list has not reached the other phones yet. Read
+ *  straight off the persisted blob, because that list's store is not in
+ *  memory - only the one this document is. */
+function unsentCountFor(id) {
+  try {
+    const blob = JSON.parse(localStorage.getItem(Store.lsKey(id)) || '{}');
+    const ob = blob && blob.outbox;
+    if (!ob || typeof ob !== 'object') return 0;
+    const meId = blob.me && blob.me.id;
+    // ROWS, and only THIS DEVICE'S OWN - both halves, and the second is the one
+    // the ledger has already ruled on twice (M16). After `requeueAll` fires on
+    // a list, its outbox is the entire local store including every record the
+    // other three phones wrote, which the server already holds and which their
+    // peers reject on arrival. Counting those would tell somebody "137 things
+    // you did have NOT reached the other phones" about work that is not theirs
+    // and is not lost - a number they cannot reconcile with anything on screen,
+    // attached to a button that destroys things.
+    const rows = new Set();
+    for (const k of Object.keys(ob)) {
+      const kind = ob[k];
+      if (typeof kind !== 'string') continue;
+      const rowId = k.startsWith(kind + ':') ? k.slice(kind.length + 1) : k;
+      const rec = blob[kind] && blob[kind][rowId];
+      if (!rec || (meId && rec.c !== meId)) continue;
+      rows.add(rowId);
+    }
+    return rows.size;
+  } catch { return 0; }
+}
+
+function forgetListFromPhone() {
+  const id = editListId;
+  if (!id || id === LIST_ID || id === DEFAULT_LIST) return;
+  const label = knownLists()[id]?.label || prettify(id);
+
+  // `pnp.v1:<id>` is the whole persisted store for that list - AND ITS OUTBOX.
+  // Removing it destroys every queued offline write on it: shop a list in a
+  // warehouse, drive home, tidy up by forgetting it, and twenty ticks nobody
+  // else has ever seen are gone. The old confirm text promised the exact
+  // opposite ("the list is untouched", "the other phones do not notice"), which
+  // is true only when there is nothing waiting. So count first, and say so.
+  const unsent = unsentCountFor(id);
+  const one = unsent === 1;
+  const warn = unsent
+    ? `\n\n${unsent} thing${one ? '' : 's'} you did on this list ${one ? 'has' : 'have'} NOT `
+      + `reached the other phones yet. Taking it off now loses ${one ? 'it' : 'them'}. `
+      + `Open the list with signal first if you want ${one ? 'it' : 'them'} to go.`
+    : '';
+
+  if (!confirm(`Take “${label}” off this phone?${warn}\n\n`
+    + 'Only this phone forgets it. Nothing is deleted and nobody else notices.\n\n'
+    + 'To get back in you will need the link and the passphrase again. If you have not '
+    + 'got the link, tap Cancel and use “Share this list” first.')) return;
+
+  // A REAL removal. Dropping the registry entry alone left the passphrase, the
+  // salt, the check and the whole cached list in localStorage - so "off my
+  // phone" was not true, and the plaintext passphrase was still sitting there.
+  const reg = knownLists();
+  delete reg[id];
+  writeLocal(LISTS_KEY, reg);
+  for (const k of perListKeys(id)) {
+    try { localStorage.removeItem(k); } catch { /* ignore */ }
+  }
+  editListId = null;
+  closeSheet('listEditSheet');
+  renderLists();
+  openSheet('listsSheet');
+  toast('Off this phone — the list itself is untouched');
+}
+
 function openLists() {
+  // NOT guarded, deliberately, and this was tried the other way round first.
+  //
+  // Guarding here strands a phone. Tap a list link in a warehouse with no
+  // signal and the locked screen shows NO passphrase box - only "Try again" -
+  // so "Enter the passphrase first" is both impossible to act on and not the
+  // problem. My lists is the one route back to a list this phone already holds
+  // cached and CAN open. Blocking it makes the household list unreachable for
+  // the whole session, in exactly the failure mode §0 says to design for.
+  //
+  // Nothing is lost by leaving it open: every destructive thing behind this
+  // sheet - rename, stores, taking a list off this phone - is guarded at
+  // `openListEdit`. What remains is sharing a link the person already has, and
+  // starting an unrelated list.
   closeSheet('menuSheet');
   renderLists();
   openSheet('listsSheet');
@@ -548,7 +912,9 @@ function renderShopPick() {
  * Largest text setting, which exists for the two people this app is built
  * around, seven gives under two. A warning that lets you do it anyway is an
  * anxiety with no action, issued at the moment somebody has least idea what a
- * tab strip even looks like, about a choice they cannot revisit.
+ * tab strip even looks like. (The original wording also leaned on the choice
+ * being unrevisitable, which v28's settings sheet made untrue - the cap stands
+ * on the measurement alone.)
  *
  * The refusal is spoken, not silent: a chip that does nothing when tapped is
  * §1's "never silently do nothing". The tap lands, and the hint says why.
@@ -607,14 +973,18 @@ function createList() {
   writeLocal(NEWSHOPS_KEY(id), { ids: [...newListPick], customName });
   // Nothing is created server-side here. A list exists the moment someone opens
   // it and sets a passphrase, which is the same path the household list took.
-  rememberList(id, label);
+  noteVisit(id, label);
   location.href = linkFor(id);
 }
 
 async function shareThisList() {
   const url = linkFor(LIST_ID);
   if (navigator.share) {
-    try { await navigator.share({ title: `Plate & Parcel — ${listLabel()}`, url }); return; }
+    // `prettify(LIST_ID)`, NOT `listLabel()`. A rename is local to this phone,
+    // so sharing the local name texts everybody a name for the list that only
+    // this device uses - the app itself spreading a name it did not change.
+    // The link's own name is the one every phone agrees on.
+    try { await navigator.share({ title: `Plate & Parcel — ${prettify(LIST_ID)}`, url }); return; }
     catch (e) { if (e && e.name === 'AbortError') return; }
   }
   try { await navigator.clipboard.writeText(url); toast('Link copied'); }
@@ -1300,15 +1670,31 @@ function wireEvents() {
     if (b) toggleShopPick(b.getAttribute('data-shoppick'));
   });
   $('listsNew').onclick = openNewList;
+  // Delegated, and optional-chained: `listsBody` is rebuilt on every open, and
+  // these ids are new in v28 — a cached older index.html against this file
+  // would otherwise throw here, on the boot path, and blank the app. That is
+  // LEDGER V8 and it is exactly what the v27 verifier caught.
+  $('listsBody')?.addEventListener('click', (e) => {
+    // ONE listener for both controls on a row. The settings button is a
+    // SIBLING of the switch button, not inside it, so `closest` cannot match
+    // both — but checking it first makes that independent of the markup.
+    const cog = e.target.closest('[data-listcog]');
+    if (cog) { openListEdit(cog.getAttribute('data-listcog')); return; }
+    const b = e.target.closest('[data-switch]');
+    if (b) switchTo(b.dataset.switch);
+  });
+  $('listEditShops')?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-lshop]');
+    if (b) toggleListShop(b.getAttribute('data-lshop'));
+  });
+  const lSave = $('listEditSave'); if (lSave) lSave.onclick = saveListEdit;
+  const lForget = $('listEditForget'); if (lForget) lForget.onclick = forgetListFromPhone;
   $('listsShare').onclick = shareThisList;
   $('newListName').addEventListener('input', previewNewList);
   $('newListName').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); createList(); }
   });
-  $('listsBody').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-switch]');
-    if (b) switchTo(b.dataset.switch);
-  });
+
   $('installOpen').onclick = openInstall;
   $('installNo').onclick = dismissInstallBar;
   $('saveAdd').onclick = saveAdd;
@@ -1361,7 +1747,12 @@ function wireEvents() {
   $('menuForget').onclick = () => {
     if (!confirm('Forget this device only? The shared list is untouched.')) return;
     store.reset();
-    try { [PASS_KEY, SALT_KEY, CHECK_KEY].forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
+    // Through `perListKeys`, not a hand-written trio. This function is the one
+    // `perListKeys` was written to stop drifting from, and it was drifting
+    // already: it left `pnp.installed:<id>` and `pnp.newshops:<id>` behind, so
+    // "Forget this device" was LESS thorough than taking a list off the phone.
+    // LEDGER V7 records this same function shipping this same shape of defect.
+    try { perListKeys(LIST_ID).forEach((k) => localStorage.removeItem(k)); } catch { /* ignore */ }
     location.reload();
   };
 
@@ -1561,7 +1952,7 @@ async function boot() {
   wireEvents();
 
   if (NO_LIST) {
-    // Deliberately before rememberList: recording this visit would write
+    // Deliberately before noteVisit: recording this visit would write
     // `pnp.lastList` and quietly turn the bare URL into a working door on the
     // next open, undoing the whole point. repaint() owns the screen from here -
     // it checks NO_LIST first, so later paints cannot overwrite it.
@@ -1570,7 +1961,7 @@ async function boot() {
   }
 
   View.configure({ catalogue: LIST_ID === DEFAULT_LIST });
-  rememberList(LIST_ID);
+  noteVisit(LIST_ID);
   $('doneBtn').textContent = store.state.ui.hideDone ? 'Show done' : 'Hide done';
   store.subscribe((d) => {
     setSyncBadge(lastStatus, lastDetail);

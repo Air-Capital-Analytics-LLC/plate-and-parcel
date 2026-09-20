@@ -22,7 +22,12 @@
  * to someone who does not know what a migration is.
  */
 const LS_PREFIX = 'pnp.v1';
-const lsKey = (ns) => `${LS_PREFIX}:${ns}`;
+/** Exported because `main.js` has to build this key for a list it is NOT
+ *  currently in - forgetting one, and counting what it still owes. Hand-copying
+ *  the prefix there meant a silent failure the day it moves: the count returns
+ *  0 forever and the removal leaves the whole cached list behind while telling
+ *  the user it is gone. One owner, no drift. */
+export const lsKey = (ns) => `${LS_PREFIX}:${ns}`;
 
 export const STATUSES = ['got', 'swap', 'skip'];
 
