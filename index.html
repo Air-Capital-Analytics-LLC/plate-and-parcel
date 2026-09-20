@@ -317,6 +317,31 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
    box was pixel-identical to the four live inputs above it — tapped, no
    keyboard, nothing said. §1: never silently do nothing. */
 input:disabled{opacity:.5; background:var(--panel);}
+/* The import preview. Capped and scrollable: a 40-line paste must not push the
+   Add button off a 320px screen at the Largest text setting, which is the same
+   fold problem the Edit sheet already has a receipt for. */
+.prev{background:var(--panel2); border:1px solid var(--line); border-radius:10px;
+  padding:6px 8px; max-height:34vh; overflow-y:auto;}
+.prev .pr{display:flex; align-items:baseline; gap:8px; padding:4px 2px; font-size:.86rem;}
+.prev .pr + .pr{border-top:1px solid var(--line);}
+/* Fixed column so the names line up and the eye can run down them. */
+.prev .pq{flex:0 0 auto; min-width:2.6em; font-weight:700; color:var(--accent-ink);}
+.prev .pn{flex:1 1 auto; min-width:0; overflow-wrap:anywhere;}
+.prev .pp{flex:0 0 auto; font-weight:700; color:var(--accent-ink); white-space:nowrap;}
+/* Allowed to wrap, unlike a price: "Weighed at the till" is ~171px nowrap at
+   Largest, which would squeeze the name to ~50px and shred it. */
+.prev .pp.byw{font-weight:500; color:var(--muted); white-space:normal; text-align:right; max-width:7em;}
+.prev .more{padding:6px 2px; font-size:.78rem; color:var(--muted);}
+/* The line that carries the whole acceptance must not be the smallest, faintest
+   text in the sheet, which is what `.sheet label` made it. */
+.prev-head{font-size:.92rem !important; color:var(--ink) !important; margin-bottom:6px !important;}
+/* THE ACTION ROW IS PINNED. Measured at Largest on a 320px phone, this sheet
+   needs ~679px against the 500px an 88vh sheet gets - and it overflowed at the
+   DEFAULT text size too. The cruel part was the dynamic: with an empty box the
+   buttons were visible, and the instant a paste parsed, the preview pushed the
+   button they came for off screen. Sticky costs one rule and means the answer
+   is always reachable however long the list is. */
+#importSheet .row{position:sticky; bottom:0; background:var(--panel); padding-top:10px;}
 /* Reported as "I really don't see it". It was a 26px muted glyph on a
    transparent background, tucked past the quantity stepper - readable as
    decoration, not as something to press. Now it is the same size and the same
@@ -857,9 +882,30 @@ label.check input{width:22px; height:22px; accent-color:var(--accent); flex-shri
 
 <div class="sheet-bg" id="importSheet"><div class="sheet">
   <h2>Paste a list</h2>
-  <div class="fld"><label>One item per line. Bullets, numbers and checkboxes are fine.</label>
-    <textarea id="importText" rows="7" placeholder="- milk&#10;2 x bread&#10;[ ] eggs"></textarea></div>
-  <div class="hint" id="importPreview"></div>
+  <div class="fld"><label>One item per line. Paste from anywhere.</label>
+    <textarea id="importText" rows="4" placeholder="- 2 x milk&#10;bread $3.49&#10;[ ] eggs"></textarea>
+    <!-- THE RULES LIVE HERE, NOT IN THE PLACEHOLDER. The placeholder was the
+         only place "2 x" and "$3.49" appeared, and it is wiped by the first
+         keystroke - so somebody pasting from Notes never saw it at all. This
+         line survives while they edit, which is exactly when the rule is
+         wanted. -->
+    <div class="hint">Put <b>2 x</b> in front for two of something, and <b>$3.49</b> at the end for a price. Bullets, numbers and tick boxes are all fine.</div></div>
+  <!-- THE PREVIEW IS THE FEATURE. The parser guesses quantities and prices, and
+       the roadmap forbids inferring a price from a pasted line without showing
+       the parse - so this is what turns "Add them" into the acceptance §1
+       requires. It is laid out like the real list rows, quantity left and price
+       right, because somebody who will not read instructions can still
+       recognise their own shopping list. -->
+  <div id="importPreview" hidden>
+    <!-- Carries the DESTINATION, and carries it above the rows. The old version
+         had an arrow under the box - "8 items → Sam's Club" - which is notation,
+         is directionally ambiguous, and did not say the thing its own comment
+         claimed: that these land on the tab hidden behind this sheet. Said here
+         it is read as the eye enters the box rather than after it leaves. -->
+    <label class="prev-head" id="importHead">This is what you will get:</label>
+    <div class="prev" id="importRows"></div>
+  </div>
+  <div class="hint" id="importEmpty">Nothing to add yet &mdash; paste a list above, one item per line.</div>
   <div class="row" style="margin-top:10px">
     <button data-close="importSheet">Cancel</button>
     <button class="primary" id="importGo" disabled>Add them</button>

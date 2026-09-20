@@ -363,7 +363,14 @@ function setSyncBadge(status, detail) {
 
 /* ================= sheets ================= */
 
-function openSheet(id) { $(id).classList.add('open'); }
+function openSheet(id) {
+  $(id).classList.add('open');
+  // BACK TO THE TOP. `.sheet` scrolls internally, and a sheet reopened after
+  // being scrolled presents itself mid-content with its own heading off screen
+  // - which reads as the app having lost its place.
+  const panel = $(id).querySelector('.sheet');
+  if (panel) panel.scrollTop = 0;
+}
 function closeSheet(id) { $(id).classList.remove('open'); }
 
 /**
@@ -1418,29 +1425,118 @@ function dismissInstallBar() {
 
 let importParsed = [];
 
+/**
+ * How many preview rows are drawn before it says "and N more".
+ *
+ * 60, NOT 8. The box is 34vh with its own scroll, which already shows about
+ * six rows at the Largest text setting - so a cap of 8 removed nothing from
+ * the first screenful and did exactly one thing: make rows 9 onwards
+ * unreachable by scrolling. The box looked scrollable and then stopped.
+ *
+ * That matters because THERE IS NO UNDO FOR AN IMPORT. "Put back items that
+ * were taken off" undoes an Empty and single removals; nothing undoes an add.
+ * So this preview IS the acceptance, and truncating it means a 40-line paste
+ * gets agreed to on the strength of eight verified rows and a count. §0 also
+ * cuts the other way here: the real list renders 58 rows, so drawing 40
+ * preview rows is nothing, and avoiding them is the bloat §0 says to reject.
+ */
+const PREVIEW_ROWS = 60;
+
 function openImport() {
   closeSheet('menuSheet');
   $('importText').value = '';
-  $('importPreview').textContent = '';
+  importParsed = [];
+  $('importPreview').hidden = true;
+  $('importEmpty').textContent = 'Nothing to add yet — paste a list above, one item per line.';
+  $('importEmpty').hidden = false;
+  $('importRows').innerHTML = '';
   $('importGo').disabled = true;
   openSheet('importSheet');
   setTimeout(() => $('importText').focus(), 150);
 }
 
+/**
+ * Draw what "Add them" would actually add.
+ *
+ * THIS IS THE ACCEPTANCE, not a nicety. The parser guesses quantities and
+ * prices from text somebody wrote for a human, and §1 says the app may SUGGEST
+ * a correction while a human accepts it. Showing the parse is what makes the
+ * guess safe to make at all - and it is the whole instruction manual, because
+ * somebody who edits the text and watches this change learns the rules without
+ * being taught any.
+ *
+ * Laid out like the real list rows - quantity left, price right - so it is
+ * recognisable as a shopping list rather than as output.
+ */
 function previewImport() {
-  importParsed = store.parseList($('importText').value);
-  const storeLabel = (View.shopsFor(store.state).find((x) => x.id === store.state.ui.store) || {}).short || '';
-  $('importPreview').textContent = importParsed.length
-    ? `${importParsed.length} item${importParsed.length === 1 ? '' : 's'} → ${storeLabel}: ${importParsed.slice(0, 6).join(', ')}${importParsed.length > 6 ? '…' : ''}`
-    : 'Nothing to add yet — paste a list above, one item per line.';
-  $('importGo').disabled = !importParsed.length;
+  const raw = $('importText').value;
+  importParsed = store.parseList(raw);
+  const n = importParsed.length;
+  $('importPreview').hidden = !n;
+  $('importEmpty').hidden = !!n;
+  $('importGo').disabled = !n;
+  if (!n) {
+    $('importRows').innerHTML = '';
+    // TWO DIFFERENT NOTHINGS. `n` is zero both when the box is empty and when
+    // it is FULL of their text and none of it parsed - a pasted paragraph (every
+    // line over 120 characters is dropped), or lines that are only bullets.
+    // Telling somebody who has just pasted to "paste a list above" is a dead
+    // end, and it reads as being told they did it wrong.
+    $('importEmpty').textContent = raw.trim()
+      ? 'Nothing here looks like a list yet. Try putting each thing on its own line.'
+      : 'Nothing to add yet — paste a list above, one item per line.';
+    return;
+  }
+
+  const shown = importParsed.slice(0, PREVIEW_ROWS);
+  // `esc` on every piece: this is the user's own text rather than a record off
+  // the wire, but it is still text reaching innerHTML, and the boundary is the
+  // boundary (§4).
+  let html = shown.map((p) => {
+    const q = p.qty > 1 ? `${p.qty} ×` : '';
+    // "Weighed at the till", word for word what the Edit sheet's toggle says,
+    // so the preview and the editor teach the same phrase. "weighed at till"
+    // is not idiomatic in any register and read as a database label.
+    const price = p.byWeight
+      ? '<span class="pp byw">Weighed at the till</span>'
+      : (p.price !== null ? `<span class="pp">$${(p.price / 100).toFixed(2)}</span>` : '');
+    return `<div class="pr"><span class="pq">${View.esc(q)}</span>`
+      + `<span class="pn">${View.esc(p.name)}</span>${price}</div>`;
+  }).join('');
+  if (n > PREVIEW_ROWS) {
+    // Says the truncation is COSMETIC. "…and 32 more" alone is ambiguous about
+    // whether those 32 are being added or dropped, which is the last thing this
+    // box should be vague about.
+    const more = n - PREVIEW_ROWS;
+    html += `<div class="more">…and ${more} more. All ${n} will be added.</div>`;
+  }
+  $('importRows').innerHTML = html;
+
+  // NAMES THE DESTINATION, in a sentence, above the rows. The import follows
+  // whichever tab you were on, and this sheet covers the tabs - so without this
+  // a paste can land somewhere the user did not intend, and there is no undo.
+  const storeLabel = importStoreLabel();
+  $('importHead').textContent = storeLabel
+    ? `This is what you will get on your ${storeLabel} list:`
+    : 'This is what you will get:';
+}
+
+/** The tab an import will land on, as it is named on screen. */
+function importStoreLabel() {
+  const s = View.shopsFor(store.state).find((x) => x.id === store.state.ui.store);
+  return (s && s.short) || '';
 }
 
 function doImport() {
   if (!importParsed.length) return;
+  // READ BEFORE THE SHEET CLOSES, and named in the toast. `closeSheet` reveals
+  // the tabs only as the toast is already fading, so if the import went to a
+  // tab the user did not mean, this sentence is the one chance to notice -
+  // there is no undo for an add.
+  const where = importStoreLabel();
   const n = store.importItems(importParsed, store.state.ui.store);
   closeSheet('importSheet');
-  toast(`Added ${n} item${n === 1 ? '' : 's'}`);
+  toast(where ? `Added ${n} item${n === 1 ? '' : 's'} to ${where}` : `Added ${n} item${n === 1 ? '' : 's'}`);
   sync?.drain();
 }
 

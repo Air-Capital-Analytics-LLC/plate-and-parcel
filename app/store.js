@@ -1052,28 +1052,194 @@ export function createStore({ ns = 'household' } = {}) {
    * message or a recipe actually looks like: bullets, numbering, checkboxes,
    * stray blank lines.
    */
+  /**
+   * Units that follow a NUMBER rather than being counted by it. "2 lb butter"
+   * is two pounds of butter, not two butters, so the 2 stays in the name where
+   * a human can read it. Kept short and literal on purpose - this is a guard
+   * against a confident wrong answer, not an attempt at a units library.
+   */
+  const UNIT_AFTER_NUMBER = new RegExp(
+    '^(lb|lbs|oz|kg|g|ml|l|ct|pk|pack|packs|dozen|doz|%'
+    // SPELLED OUT TOO. The abbreviations alone left "2 pounds beef" and
+    // "2 cups flour" becoming two items named "pounds beef" and "cups flour" -
+    // the same confidently-wrong shape the guard exists to prevent, and a name
+    // that reads as broken.
+    + '|pounds?|ounces?|grams?|kilos?|kilograms?|lit(?:er|re)s?'
+    + '|quarts?|pints?|gallons?|cups?|tbsp|tsp|cans?|jars?|boxes|box|bags?'
+    + ')\\b', 'i');
+
+  /**
+   * A RATE is a price per unit of WEIGHT or VOLUME, and only those.
+   *
+   * `[a-z]{1,5}` after the slash was too generous: "$1.50/ea" and "$1.50/each"
+   * are per-unit prices written the way people write them, and treating them as
+   * rates stored `{v:0, w:true}` - which `counts` excludes from the total
+   * entirely, silently ignoring a price the user did supply.
+   */
+  const RATE_UNIT = /\$\s?\d{1,6}(?:\.\d{1,2})?\s?\/\s?(lb|lbs|oz|kg|g|gram|grams|pound|pounds|ounce|ounces|litre|liter|l|ml)\b/i;
+
+  /**
+   * One pasted line -> what it seems to say, or null if it says nothing.
+   *
+   * LINEAR REGEXES ONLY, every one anchored and none nested. JS has no atomic
+   * groups, so a nested quantifier over attacker-ish text backtracks
+   * exponentially - and the 120-character cap is not a bound on that, because
+   * it is applied AFTER the matching that would hang. Every pattern here scans
+   * the line once.
+   *
+   * IT GUESSES, AND THE GUESS IS ALWAYS SHOWN. That is the whole bargain: the
+   * roadmap forbids inferring a price from a pasted line without showing the
+   * parse, because "2x milk $3.99" is genuinely ambiguous about what the author
+   * meant even though the app's storage is not. The preview is what turns
+   * "Add them" into the acceptance §1 requires - the app suggests, a human
+   * agrees.
+   *
+   * THE TRAPS, each of which produces a confidently wrong answer if missed:
+   *   "2x4 lumber"    the 2 is part of a product name, not a count
+   *   "7up"           likewise, and there is no space to separate them
+   *   "2% milk"       the number belongs to the % that follows it
+   *   "1/2 lb butter" a fraction, and then a unit
+   *   "$1.99/lb"      a RATE. Not a per-unit price, and cannot be totalled
+   *   "1. milk"       list numbering, stripped before any of this runs
+   */
+  function parseLine(raw) {
+    let line = String(raw || '').trim();
+    if (!line) return null;
+    // THE CAP RUNS FIRST, and that is a correction. It used to sit three lines
+    // below the strip chain, which meant it bounded nothing that mattered - a
+    // 40 KB line was fully matched against every pattern before being thrown
+    // away. Checked here, no pattern below ever sees more than 120 characters.
+    if (line.length > 120) return null;
+    line = line.replace(/^[-*•–—+>]+\s*/, '');                 // bullets
+    // ONE CHARACTER CLASS, not `\s* [xX✓]? \s*`. That was two adjacent
+    // unbounded quantifiers over overlapping classes, so a line starting `[`
+    // followed by a long whitespace run that never reaches `]` made the engine
+    // walk every split point: measured O(n²), 5 seconds on 80 KB, and it fires
+    // on the non-breaking and em spaces you get from pasting out of a rendered
+    // web page. It predates v31 - but v31 moved it under a comment claiming
+    // every pattern here scans the line once, which was not true of this one.
+    line = line.replace(/^\[[xX✓\s]*\]\s*/, '');               // [ ] and [x]
+    // NUMBERING NEXT, so "1. milk" can never be read as one milk. It is the
+    // only place a leading number is definitely not a quantity.
+    line = line.replace(/^\d{1,3}\s*[.)\]]\s+/, '');
+    line = line.replace(/\s+/g, ' ').trim();
+    if (!line) return null;
+
+    let qty = MIN_QTY;
+    let price = null;
+    let byWeight = false;
+
+    // A RATE IS NOT A PRICE. "$1.99/lb" has no per-unit figure in it at all -
+    // the till works it out from the weight - so this marks the row by weight
+    // and takes no number. Checked BEFORE the price pattern so a rate can never
+    // fall through into one.
+    // STRIPPED, not just flagged. The price branch below removes its match from
+    // the name and this one did not, so the item was stored permanently called
+    // "mince $1.99/lb" and rendered with the price text AND a "by weight" tag
+    // saying there is no price, on the same row. It also broke dedup
+    // asymmetrically: "milk $3.49" and "milk $3.49/lb" became two items.
+    const rate = line.match(RATE_UNIT);
+    if (rate) {
+      byWeight = true;
+      line = (line.slice(0, rate.index) + ' ' + line.slice(rate.index + rate[0].length)).replace(/\s+/g, ' ').trim();
+    }
+
+    // PRICE, only at the end, and only with a `$`. Without the dollar sign
+    // "bread 2" would become a price of $2 - and a trailing bare number is far
+    // more often a size or a count than a price.
+    if (!byWeight) {
+      const m = line.match(/\s\$\s?(\d{1,6}(?:\.\d{1,2})?)$/);
+      if (m) {
+        const cents = Math.round(Number(m[1]) * 100);
+        if (Number.isFinite(cents) && cents >= 0 && cents <= MAX_PRICE) {
+          price = cents;
+          line = line.slice(0, m.index).trim();
+        }
+      }
+    }
+
+    // QUANTITY, explicit form first: "2 x bread", "2x bread". The space after
+    // the x is required and the remainder must not start with a digit, which is
+    // what keeps "2x4 lumber" intact.
+    let m = line.match(/^(\d{1,3})\s*[x×]\s+(\D.*)$/i);
+    if (!m) {
+      // Bare form: "2 milk". The space is required, so "7up" and "2%" are
+      // untouched; a following `/` or `.` never reaches here because `\s` must
+      // come straight after the digits, which also excludes "1/2".
+      const bare = line.match(/^(\d{1,3})\s+([A-Za-z].*)$/);
+      // NOT A DANGLING `x`. Because the price is stripped BEFORE this runs,
+      // "2 x $3.99" arrives here as the line "2 x", which the bare form happily
+      // matched - leaving an item literally named "x". Same for "2 x 4 lumber",
+      // the spaced cousin of the "2x4" trap.
+      if (bare && !/^[x×]\b/i.test(bare[2]) && !UNIT_AFTER_NUMBER.test(bare[2])) m = bare;
+    }
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n >= MIN_QTY && n <= MAX_QTY) {
+        qty = n;
+        line = m[2].trim();
+      }
+    }
+
+    if (!line) return null;
+    return { name: line, qty, price, byWeight };
+  }
+
+  /**
+   * Pasted text -> one entry per line, de-duplicated by NAME.
+   *
+   * Deduped on the parsed NAME rather than the raw line, so "2 x milk" and
+   * "milk" are one item rather than two.
+   *
+   * THE RICHER LINE WINS EACH FIELD, which is not the same as "the first line
+   * wins". First-wins looked right and quietly threw work away: a list reading
+   * "milk" then "2 x milk $3.49" kept the bare one and lost BOTH the quantity
+   * and the price. The name keeps its first spelling - somebody who wrote it
+   * twice meant it the first way - but a quantity, a price or a by-weight mark
+   * found on any line for that name is carried across, because a person who
+   * bothered to type a number meant the number.
+   */
   function parseList(text) {
-    const seen = new Set();
+    const byName = new Map();
     const out = [];
     for (const raw of String(text || '').split(/\r?\n/)) {
-      let line = raw.trim();
-      if (!line) continue;
-      line = line.replace(/^[-*•–—+>]+\s*/, '');       // bullets
-      line = line.replace(/^\[\s*[xX✓]?\s*\]\s*/, '');           // [ ] and [x]
-      line = line.replace(/^\d+\s*[.)\]]\s*/, '');                    // 1. 1) 1]
-      line = line.replace(/\s+/g, ' ').trim();
-      if (!line || line.length > 120) continue;
-      const key = line.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(line);
+      const p = parseLine(raw);
+      if (!p) continue;
+      const key = p.name.toLowerCase();
+      const prev = byName.get(key);
+      if (!prev) { byName.set(key, p); out.push(p); continue; }
+      if (prev.qty === MIN_QTY && p.qty > MIN_QTY) prev.qty = p.qty;
+      // By weight and a per-unit price are mutually exclusive - a rate has no
+      // per-unit figure in it - so the by-weight mark clears any price it meets.
+      if (p.byWeight && !prev.byWeight) { prev.byWeight = true; prev.price = null; }
+      if (!prev.byWeight && prev.price === null && p.price !== null) prev.price = p.price;
     }
     return out;
   }
 
-  function importItems(names, storeId) {
+  /**
+   * Add what the preview showed.
+   *
+   * WRITES A `qty` OR `price` RECORD ONLY WHEN IT IS NOT THE DEFAULT. A 40-line
+   * paste would otherwise become 120 records - three per row, two of them
+   * saying nothing - and every one of those is a sealed envelope in the root
+   * snapshot every phone re-downloads on every reconnect (§0's receipt).
+   *
+   * Accepts the old array-of-strings shape too, so a caller that has not been
+   * updated cannot silently import nothing.
+   */
+  function importItems(entries, storeId) {
     let n = 0;
-    for (const name of names) { addItem({ name, note: '', store: storeId }); n++; }
+    for (const e of entries) {
+      const p = typeof e === 'string' ? { name: e, qty: MIN_QTY, price: null, byWeight: false } : e;
+      if (!p || !p.name) continue;
+      const id = addItem({ name: p.name, note: '', store: storeId });
+      n++;
+      if (!id) continue;
+      if (p.qty > MIN_QTY) setQty(id, p.qty);
+      if (p.byWeight) setPrice(id, 0, true);
+      else if (p.price !== null && p.price !== undefined) setPrice(id, p.price, false);
+    }
     return n;
   }
 
