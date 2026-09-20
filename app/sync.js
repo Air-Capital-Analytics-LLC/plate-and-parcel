@@ -35,8 +35,25 @@ const SNAPSHOT_WAIT = 10000;
 /** How long a stream must survive before we believe it. See `connect`. */
 const STABLE_AFTER = 15000;
 
-/** No traffic for this long, on a stream that still claims to be open, means
- *  the socket died silently while the phone was in a pocket. */
+/**
+ * No traffic for this long, on a stream that still claims to be open, means
+ * the socket died silently while the phone was in a pocket.
+ *
+ * SINCE M18 THIS IS A CONTINUOUSLY ENFORCED DEADLINE, not one checked only when
+ * the page comes back to the foreground — so it now carries an assumption it
+ * never used to: **the server's keep-alive cadence must stay comfortably under
+ * 45 seconds.** RTDB's is widely ~30s, which leaves ~1.5x of margin, and
+ * measured jitter is absorbed (30s nominal with every tenth keep-alive arriving
+ * at 46s produces zero extra reconnects). A SUSTAINED cadence of 50s would not
+ * be: it would tear down and re-establish a perfectly healthy stream about 13
+ * times per 45-minute trip, each one a full root-snapshot re-download and a
+ * decrypt pass on cellular, plus a Live -> Connecting -> Live badge flicker in
+ * front of the two people §1 calls the design centre.
+ *
+ * Measured by the M18 review, and written down here because until that change
+ * nothing depended on the margin and so nothing recorded it. If reconnects ever
+ * climb without the network being at fault, suspect this number first.
+ */
 const STALE_AFTER = 45000;
 
 /** How long to wait for a simultaneous identity claim before settling one.
@@ -69,6 +86,7 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
   let attempt = 0;
   let reconnectTimer = null;
   let stableTimer = null;
+  let staleTimer = null;          // M18: the read path's own staleness check
   let writeRetryTimer = null;
   let draining = false;
   let drainAgain = false;
@@ -278,12 +296,17 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
     es.addEventListener('open', () => {
       setStatus(Status.LIVE);
       // No drain here — but note that removing it is NOT what orders the
-      // flush. `snapshotPending` is; see its declaration. An earlier version of
-      // this comment claimed a "stale-stream timer" would cover a link that
-      // opens and delivers nothing. There is no such timer: `STALE_AFTER` is
-      // read in one place, inside the visibility handler, so a page that simply
-      // stays open never re-checks. `SNAPSHOT_WAIT` is the backstop that
-      // actually exists.
+      // flush. `snapshotPending` is; see its declaration.
+      //
+      // UPDATED 2026-09-20 (LEDGER M18): this comment used to say a stale-stream
+      // timer did not exist, because for a long time it did not - `STALE_AFTER`
+      // was read only inside the visibility handler, so a page that simply
+      // stayed open never re-checked. That timer exists now (`stalePoll`,
+      // below), and it is what covers a link that opens and delivers nothing.
+      // `SNAPSHOT_WAIT` remains the backstop for the WRITE path. Left as a
+      // correction rather than a deletion because the flapping receipt below
+      // refers to this paragraph, and a reader arriving at it deserves the
+      // current state of the world rather than a stale denial.
       // `open` fires when response HEADERS arrive, not when the stream proves
       // it can stay up. Resetting the backoff here meant a link that connects
       // and drops every few seconds could never leave attempt 0 — roughly 800
@@ -578,13 +601,52 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
   // `snapshotPending`, and the flush follows the snapshot (or `SNAPSHOT_WAIT`).
   const onlineHandler = () => { attempt = 0; connect(); };
   const offlineHandler = () => { closeStream(); setStatus(Status.OFFLINE); };
-  const visibilityHandler = () => {
-    if (document.visibilityState !== 'visible') return;
+  /**
+   * The staleness check itself, so the visibility handler and the timer below
+   * cannot drift apart - they are the same question asked at two moments.
+   */
+  function checkStale() {
+    // A KNOWN-OFFLINE PHONE IS NOT A STALE STREAM. Without this the poll walks
+    // into `connect()` every 22.5s, hits its own `navigator.onLine` gate, and
+    // calls `setStatus(OFFLINE)` again - 26 redundant status callbacks per ten
+    // minutes, each scanning the outbox for the badge count and writing the
+    // DOM, in the state the app spends most of a warehouse trip in. The
+    // `online` event is what recovers from offline, not this timer.
+    if (navigator.onLine === false) return;
     if (!es && !reconnectTimer) { connect(); return; }
     // A backgrounded PWA's socket is routinely suspended without ever firing
     // `error`, so `es` stays non-null and readyState stays OPEN while nothing
     // arrives. The badge would keep saying Live for the rest of the trip.
     if (es && Date.now() - lastMessageAt > STALE_AFTER) { attempt = 0; connect(); }
+  }
+
+  const visibilityHandler = () => {
+    if (document.visibilityState !== 'visible') return;
+    checkStale();
+  };
+
+  /**
+   * THE SAME CHECK, ON A TIMER, for the phone that never changes visibility
+   * (LEDGER M18).
+   *
+   * `STALE_AFTER` used to be read only inside `visibilityHandler`, so it was
+   * reached only by switching away and back. A phone propped screen-up in a
+   * trolley with a zombie socket - connected, keep-alives arriving, no data -
+   * never re-evaluated, never reconnected, and showed `Live` over a list that
+   * could be twenty minutes old. v26's `SNAPSHOT_WAIT` protects the WRITE path
+   * from exactly this; nothing protected the read path.
+   *
+   * At `STALE_AFTER / 2` so a stale stream is caught within one-and-a-half
+   * windows rather than depending on where the tick lands. Cheap: one comparison
+   * every 22.5s, and `connect()` is only called when the stream has genuinely
+   * gone quiet, so a healthy link is never disturbed. It is also skipped while
+   * the document is hidden - a backgrounded page should not be reconnecting on
+   * a timer, and `visibilityHandler` already covers the moment it returns.
+   */
+  const stalePoll = () => {
+    if (stopped) return;
+    if (document.visibilityState !== 'visible') return;
+    checkStale();
   };
 
   function start() {
@@ -593,6 +655,8 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
     addEventListener('online', onlineHandler);
     addEventListener('offline', offlineHandler);
     document.addEventListener('visibilitychange', visibilityHandler);
+    clearInterval(staleTimer);
+    staleTimer = setInterval(stalePoll, Math.max(1000, Math.floor(STALE_AFTER / 2)));
     connect();
   }
 
@@ -601,6 +665,10 @@ export function createSync({ dbUrl, listId, codec, onRemote, onStatus, onEmptySn
     removeEventListener('online', onlineHandler);
     removeEventListener('offline', offlineHandler);
     document.removeEventListener('visibilitychange', visibilityHandler);
+    // Cleared with everything else. A surviving interval is the leak shape this
+    // project already has a receipt for on the process side, and a stopped sync
+    // that reconnects on a timer is worse than one that does not run at all.
+    clearInterval(staleTimer); staleTimer = null;
     clearTimeout(reconnectTimer); reconnectTimer = null;
     clearTimeout(writeRetryTimer); writeRetryTimer = null;
     // Clear the gate as well as its timer: a stopped sync that is later

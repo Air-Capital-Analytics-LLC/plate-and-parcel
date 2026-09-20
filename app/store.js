@@ -251,6 +251,9 @@ export function createStore({ ns = 'household' } = {}) {
    *  behind it. A Set so one row counts once however many kinds it held. Read
    *  once, by the boot path, to tell the user something went. */
   const droppedRows = new Set();
+  /** M19: the whole persisted blob failed to parse, so nothing is countable.
+   *  Read once by the boot path, beside `takeDroppedWork`. */
+  let blobUnreadable = false;
 
   const state = {
     items: Object.create(null),   // itemId -> {s, n, by, t, c}  (s null = cleared)
@@ -286,6 +289,13 @@ export function createStore({ ns = 'household' } = {}) {
     if (raw) {
       try {
         const o = JSON.parse(raw);
+        // VALID JSON IS NOT A USABLE BLOB (LEDGER M19, second half). `"5"`,
+        // `"[]"` and `'"hello"'` all parse cleanly, load nothing, and used to
+        // set neither the sentinel nor a count - so the app started empty and
+        // said nothing, which is the exact failure M19 was opened about, just
+        // reached through the success path instead of the catch. Throwing here
+        // routes them to the same honest message as a truncated blob.
+        if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('blob is not an object');
         // Locally persisted records went through the same gate on the way in,
         // but a previous version's data (or a hand-edited store) has not.
         // Driven by KINDS rather than five hand-written loops. The old version
@@ -371,7 +381,23 @@ export function createStore({ ns = 'household' } = {}) {
         const t = Math.round(state.ui.text);
         state.ui.text = Number.isFinite(t) ? Math.min(TEXT_SIZES.length - 1, Math.max(0, t)) : 0;
         Object.assign(state.me, o.me || {});
-      } catch { /* corrupt: start clean rather than crash */ }
+      } catch {
+        // CORRUPT: start clean rather than crash - but SAY SO (LEDGER M19).
+        //
+        // This catch discards the entire persisted blob. The M16 counter that
+        // tells somebody their work did not survive is computed from
+        // `state.outbox`, which in exactly this case was never parsed and is
+        // therefore empty - so the single most total loss this app can suffer
+        // was the one case it reported ZERO for. The counter is the wrong
+        // instrument here: nothing is countable, because nothing was read.
+        //
+        // A sentinel rather than a number. `takeDroppedWork` already returns a
+        // count, so `blobUnreadable` is asked separately and the boot path says
+        // a different sentence for it - "this phone's saved list could not be
+        // read at all" is not "3 taps did not send", and telling someone the
+        // second when the first happened is worse than saying nothing.
+        blobUnreadable = true;
+      }
     }
     // `me.id` gets the SAME gate every record's `c` field gets, because it
     // becomes that field. `stamp()` writes it into everything this device
@@ -522,6 +548,9 @@ export function createStore({ ns = 'household' } = {}) {
    * failure.
    */
   function takeDroppedWork() { const n = droppedRows.size; droppedRows.clear(); return n; }
+  /** M19. Read-and-clear like `takeDroppedWork`, so the boot path reports it
+   *  once and a later reload does not repeat a thing already said. */
+  function takeBlobUnreadable() { const v = blobUnreadable; blobUnreadable = false; return v; }
 
   /* ---- observer ---- */
 
@@ -1162,6 +1191,6 @@ export function createStore({ ns = 'household' } = {}) {
     getQty, setQty, bumpQty,
     isFlagged, flagInfo, setFlag, setShop, parseList, importItems,
     mergeRemote, pendingOps, ackOps, pendingCount, requeueAll, restampPending,
-    flushPersist, isPersistBroken, takeDroppedWork, reset, wins, isWellFormed,
+    flushPersist, isPersistBroken, takeDroppedWork, takeBlobUnreadable, reset, wins, isWellFormed,
   };
 }

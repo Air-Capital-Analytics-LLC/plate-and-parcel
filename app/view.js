@@ -381,17 +381,44 @@ export function itemHTML(item, state, opts = {}) {
   // one shopper failing to find something is not proof the store never has it.
   const flagged = !!state.flags[flagKey(item.id, storeId)]?.f;
   const flagBy = state.flags[flagKey(item.id, storeId)]?.by || '';
-  const otherStore = storeId === 'sams' ? 'costco' : 'sams';
-  const flaggedBoth = flagged && !!state.flags[flagKey(item.id, otherStore)]?.f;
   // The "try somewhere else" bucket, resolved against THIS list. It used to be
   // the words "Custom shop" hardcoded — which names a tab that may have been
   // renamed, or that this list may not have at all, and §3 forbids a dead end.
-  const otherBucket = shopsFor(state).find((s) => s.id === 'custom');
+  // Hoisted: this was two `shopsFor(state)` calls per row, each scanning
+  // `state.added`, so 116 per 58-row render instead of 58. Immaterial at §0's
+  // scale; free while the file is open.
+  const shops = shopsFor(state);
+  const otherBucket = shops.find((s) => s.id === 'custom');
+
+  // EVERY OTHER SHOP THIS LIST HAS, not one hardcoded peer (LEDGER M24). This
+  // was `storeId === 'sams' ? 'costco' : 'sams'`, so any tab that was not Sam's
+  // resolved to Sam's: on a list of Costco and Target, standing on Costco, the
+  // hint asked whether the item was flagged at a store that list does not have.
+  // The answer is always no, so the hint NEVER appeared, however many shops the
+  // item was flagged at. Defensible while the store set was frozen at three;
+  // v28 made it editable per list, which is what made it wrong.
+  //
+  // The `custom` bucket is excluded because it is what the hint SUGGESTS moving
+  // to - counting it would mean "it is missing everywhere including the place I
+  // am about to send you", which is advice the app should not give. With two
+  // shops this returns exactly what the old line did; with four it is the only
+  // correct answer.
+  const elsewhere = shops.filter((s) => s.id !== storeId && s.id !== 'custom');
+  const flaggedEverywhere = flagged
+    // NOT WHILE STANDING ON THE BUCKET ITSELF. `!item.custom` below does not
+    // cover this: `custom: true` is set only on DATA.custom CATALOGUE rows, so
+    // a hand-typed item filed under this shop - or a catalogue row moved into
+    // it - has `custom === false`, and the hint told you to move it to the tab
+    // you were already looking at. The rewrite excluded `custom` from the COUNT
+    // and forgot the tab, which is the same omission twice.
+    && storeId !== 'custom'
+    && elsewhere.length > 0
+    && elsewhere.every((s) => !!state.flags[flagKey(item.id, s.id)]?.f);
   const flagRow = flagged
     ? `<div class="flagline" data-unflag="${esc(item.id)}">`
       + `<b>Not stocked here</b>${flagBy ? ' &middot; ' + esc(flagBy) : ''}`
-      + (flaggedBoth && !item.custom && otherBucket
-        ? ` &mdash; nobody can find it at either store, try moving it to ${esc(otherBucket.short)}` : '')
+      + (flaggedEverywhere && !item.custom && otherBucket
+        ? ` &mdash; nobody can find it at ${elsewhere.length === 1 ? 'either store' : 'any of your stores'}, try moving it to ${esc(otherBucket.short)}` : '')
       + ` <span class="pencil">&#10005;</span></div>`
     : '';
 

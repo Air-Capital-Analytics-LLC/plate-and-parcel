@@ -2031,6 +2031,47 @@ function applyTextSize() {
  * good; it waits, it can be re-read, and it goes away when a human says so.
  */
 function reportDroppedWork() {
+  // ASKED FIRST, and it is a DIFFERENT sentence (LEDGER M19). When the whole
+  // persisted blob fails to parse, `load()` discards it and the count below is
+  // computed from an outbox that was never read — so it is zero, and the most
+  // total loss this app can suffer used to be the one case it said nothing
+  // about. A count cannot describe it: nothing was countable. §3 says say what
+  // happened and what to do, so it says what actually happened.
+  const unreadable = store.takeBlobUnreadable();
+  if (unreadable) {
+    store.flushPersist();
+    const bar = document.createElement('div');
+    bar.className = 'warnbox lostbar';
+    // TRUE AT THE MOMENT IT PAINTS. The first draft said the list had "started
+    // fresh from what the other phones have" - but this runs at the unlock, and
+    // `createSync` is constructed BELOW that call, so nothing has been asked of
+    // the database yet and the list underneath this bar is empty. In a dead
+    // zone it stays empty for the whole trip, so that sentence would have been
+    // a false reassurance, read by somebody standing in a shop.
+    //
+    // No "tap it again" either: that advice belongs to the counted bar below,
+    // where the list is intact and a few rows are stale. Here there is nothing
+    // to tap, and borrowed advice the screen cannot satisfy is the dead end §3
+    // forbids.
+    //
+    // The loss is stated agentlessly - "the other phones never got it", like
+    // the bar below - because nothing here is sent by a person (§3, never blame
+    // the user).
+    bar.innerHTML = '<span>This phone’s copy of the list was damaged, so it was cleared. '
+      + 'Anything you changed here that the other phones never got is gone. '
+      + 'The list comes back when you have signal.</span>'
+      + '<button class="pxl" id="lostOk">OK</button>';
+    listEl.parentNode.insertBefore(bar, listEl);
+    $('lostOk').onclick = () => bar.remove();
+    // Same reasoning as the counted branch: one bar at a time. This one outranks
+    // a convenience nag by more than that one does, and it was the branch that
+    // left the nag standing.
+    document.querySelector('.installbar')?.remove();
+    return;
+  }
+  // BELOW the return, not above it. Consuming the count on a path that never
+  // reports it throws it away; the two cannot both be set today, but that is a
+  // property of where `droppedRows` is filled, not of this function.
   const n = store.takeDroppedWork();
   if (!n) return;
   // Make the loss final on disk in the same turn it is announced. `load()`
