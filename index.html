@@ -606,6 +606,37 @@ input:disabled{opacity:.5; background:var(--panel);}
   -webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);
   filter:drop-shadow(0 4px 8px var(--shadow));}
 .fab::before{-webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);}
+/* THE + IS DRAWN, NOT TYPED.
+   Centring text centres the LINE BOX, and a line box reserves room for
+   descenders that a "+" never uses - so the glyph's ink lands below the middle
+   of the button. Measured here: the line box centres 12px above the baseline
+   while the plus ink centres 8.5px above it, leaving the mark 3.5px low on a
+   56px button, and 5px low at the Largest text setting. It is the only control
+   where this shows, because it is the only big one with a single glyph and
+   nothing beside it to read against.
+
+   NOT FIXED WITH padding-bottom. That number is Segoe UI on this machine; the
+   phones this app is actually for are on SF Pro and Roboto, whose metrics
+   differ, so a nudge measured here would be wrong there - and being wrong
+   somewhere I cannot see is precisely how the v33 colour figures went astray
+   (LEDGER M35). Two bars positioned by the BOX cannot be wrong on any font.
+
+   `font-size:0` hides the text node rather than removing it; the button's name
+   comes from its aria-label, so nothing is lost to a screen reader. Sized in
+   px, like the button itself, which is deliberately fixed at 56px so it does
+   not grow under the thumb already pressing it.
+
+   14x4 to match what it replaces: the typed glyph measured 13x13 with 3px
+   bars here. This is a CENTRING fix, not a redesign, so the mark keeps the
+   weight it had - and drawing it makes that weight the same on every phone,
+   where before it was whatever the system font happened to give. */
+.fab{font-size:0;}
+.fab::after{
+  content:''; position:absolute; inset:0;
+  background:
+    linear-gradient(currentColor,currentColor) center/14px 4px no-repeat,
+    linear-gradient(currentColor,currentColor) center/4px 14px no-repeat;
+}
 /* Gold OUTLINE, deliberately not a gold fill. Floating over a row it had the
    same fill, bevel and outline as an untouched Got/Swap/Skip, so it read as a
    fourth action button - the wrong category, not merely low contrast. Gold is
