@@ -1,0 +1,77 @@
+# Deploy this site to GitHub Pages.
+#
+# Replaces the built-in "pages build and deployment" job that GitHub generates
+# for branch publishing. Two reasons, in order of how much they matter:
+#
+#   1. A push shows up here as QUEUED straight away. The built-in job is
+#      dispatched invisibly, so when a deploy is late you cannot tell "waiting
+#      in a queue" from "never fired". Both v27 and v28 sat ~38 minutes with no
+#      run to look at.
+#   2. The 10-builds-per-hour soft limit on branch publishing does not apply to
+#      this path.
+#
+# There is no build step. The repository root IS the site, so the whole thing is
+# uploaded as-is. Note that Jekyll no longer runs over it - nothing here was
+# ever Jekyll-flavoured, and not running it is one less thing between the files
+# and the phone.
+
+name: Deploy to Pages
+
+on:
+  push:
+    branches: [main]
+  # Lets you re-deploy the current commit from the Actions tab without
+  # manufacturing an empty commit to do it.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time. `cancel-in-progress: false` on purpose: cancelling a
+# deploy halfway is how a site ends up serving half of one version and half of
+# another, and a VERSION-keyed service worker cache makes that stick.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # LEDGER M23. `node --check file.js` does NOT check an ES module - it
+      # returned 0 on a main.js that does not parse, and index.html loads that
+      # file as a module, so every phone would have shown the static shell and
+      # the service worker would have cached it. Copying to .mjs first is what
+      # makes the check real. This step exists so that failure cannot be
+      # deployed by anyone, on any machine, including by me in a hurry.
+      #
+      # Delete this step and the gate goes away. Nothing else depends on it.
+      - name: Every module must parse
+        run: |
+          fail=0
+          for f in app/*.js sw.js config.js; do
+            cp "$f" "/tmp/$(basename "$f" .js).mjs"
+            if node --check "/tmp/$(basename "$f" .js).mjs"; then
+              echo "  ok    $f"
+            else
+              echo "  PARSE FAIL  $f"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
