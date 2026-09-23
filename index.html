@@ -41,14 +41,16 @@
    the stylesheet only ever needs one selector. Never throws: private mode makes
    localStorage itself throw on read, and a theme is not worth a blank app. */
 (function () {
-  /* Four grounds, because v33 added a second SKIN on top of the two themes and
-     the browser chrome has to match whichever of the four is about to paint.
+  /* Six grounds - three SKINS (Retro, Lux since v33, Clear since v35) on top of
+     the two themes - and the browser chrome has to match whichever is about to
+     paint.
      Keyed skin-then-theme, and duplicated in main.js as THEME_COLOR - the two
      copies exist because this script cannot import a module and still run
      before the first paint. If a ground colour ever changes, both move. */
   var GROUND = {
     retro: { dark: '#12141c', light: '#f2f4f8' },
-    lux:   { dark: '#0f1411', light: '#f5f1e8' }
+    lux:   { dark: '#0f1411', light: '#f5f1e8' },
+    clear: { dark: '#121212', light: '#f4f4f4' }
   };
   var t, k;
   try { t = localStorage.getItem('pnp.theme'); } catch (e) { t = null; }
@@ -61,9 +63,9 @@
      written for it, and `html[data-skin="lux"]` overrides on top. An absent
      attribute is also what an older cached copy of this file produces, so a
      half-updated install lands on the skin it already knows how to draw. */
-  if (k !== 'lux') k = 'retro';
+  if (k !== 'lux' && k !== 'clear') k = 'retro';
   document.documentElement.setAttribute('data-theme', t);
-  if (k === 'lux') document.documentElement.setAttribute('data-skin', 'lux');
+  if (k !== 'retro') document.documentElement.setAttribute('data-skin', k);
   var m = document.querySelector('meta[name="theme-color"]');
   if (m) m.setAttribute('content', GROUND[k][t]);
 })();
@@ -128,7 +130,14 @@
      also carries its name, at most four are ever chosen at once, and no more
      than a few can be on screen together. First drafts of this line put Target
      within a hair of Costco's pink and Aldi on top of the brand gold. The
-     original three keep their values exactly: nobody's list gets recoloured. */
+     original three keep their values exactly: nobody's list gets recoloured.
+
+     NO TWO OF THE SEVEN MAY LOOK ALIKE, in any skin or theme (v35). A list
+     picks any four, so ANY two can end up side by side - Lux once drew Costco
+     and Walmart in the same steel blue, next to each other. Checking only the
+     neighbours in pool order would miss that, so the v33 probe measures every
+     pair. Clear additionally holds every pair apart under all three
+     colourblindness simulations; the other two skins are not asked to. */
   --target:#ffa94d; --walmart:#66d9e8; --aldi:#c0eb75; --dillons:#f783ac;
 
   /* Planning is a different ACTIVITY from shopping - deciding what to buy
@@ -175,7 +184,11 @@ html[data-theme="light"]{
   --got-ink:#1c6e2c; --swap-ink:#1971c2; --skip-ink:#a51111;
 
   --sams:#114e86; --costco:#3e4b57; --custom:#0b4f37;
-  --target:#853507; --walmart:#085361; --aldi:#3b5014; --dillons:#9d1c49;
+  /* Walmart and Aldi moved in v35. Walmart's dark teal sat beside Costco's
+     slate, and Aldi's olive beside Other's green - two pairs that read as one
+     colour when the tabs are side by side, and any two tabs can be. The
+     original three did not move. */
+  --target:#853507; --walmart:#8632b6; --aldi:#6b5a00; --dillons:#9d1c49;
 
   --plan:#7048e8; --plan-ink:#5f3dc4; --on-plan:#ffffff;
 
@@ -190,8 +203,9 @@ html[data-theme="light"]{
   --bevel-edge:#aeb6c8;
 }
 /* ============================ LUX =====================================
-   The second skin (v33). A gentleman's club at night: hunter green, aged
-   brass, oxblood, steel blue. It is COLOUR AND ORNAMENT ONLY - not one size,
+   The second skin (v33). A gentleman's club at night: hunter green panelling,
+   and jewel tones on it - gold, ruby, sapphire (deepened in v35 from brass,
+   oxblood and steel, which were too faint to read). It is COLOUR AND ORNAMENT ONLY - not one size,
    space or tap target moves, so nothing has to be re-measured at the Largest
    text setting.
 
@@ -212,17 +226,25 @@ html[data-skin="lux"]{
   --ink:#efe9dc; --muted:#a39a86;
   --shadow:rgba(0,0,0,.6);
 
-  --accent:#c9a961; --accent-ink:#d6b978; --on-accent:#1a1f16;
+  /* RE-CUT IN v35 FOR PIGMENT. The first Lux was all greyed-down tints - brass,
+     steel, dusty rose - and on a phone in a shop they were barely there: the
+     buttons read as grey and two store tabs drew in the same steel blue. These
+     are the same family pushed to jewel tones: gold, sapphire, ruby. Holding
+     apart under colourblindness is Clear's job now, not Lux's; these still
+     carry the marks and still clear 4.5:1 everywhere. */
+  --accent:#e8b43a; --accent-ink:#f0c24f; --on-accent:#1a1f16;
 
-  --got:#c9a961; --on-got:#1a1f16;
-  --got-ink:#d6b978; --swap-ink:#7d9cb5; --skip-ink:#c98086;
-  --swap:#5a7892; --on-swap:#ffffff;
-  --skip:#57262a; --on-skip:#ffffff;
+  --got:#e8b43a; --on-got:#1a1f16;
+  --got-ink:#f0c24f; --swap-ink:#7aabff; --skip-ink:#ff8a90;
+  --swap:#2461b8; --on-swap:#ffffff;
+  --skip:#8e1b2c; --on-skip:#ffffff;
 
-  --sams:#c9a961; --costco:#8aa2b8; --custom:#ded3bb;
-  --target:#b894b3; --walmart:#85a2b9; --aldi:#8fa87e; --dillons:#bf949c;
+  /* Seven hues around the wheel plus one neutral, so no two stores share a
+     tone. Sapphire, ruby, orchid, gold, emerald, teal, ivory. */
+  --sams:#76a9fe; --costco:#fd8685; --custom:#f4ead9;
+  --target:#ec86cc; --walmart:#fac355; --aldi:#66cb79; --dillons:#43d5dc;
 
-  --plan:#8f7fb0; --plan-ink:#b6a6d4; --on-plan:#14110c;
+  --plan:#9b7fe0; --plan-ink:#c0a8ff; --on-plan:#14110c;
 
   --frozen-bg:#26323a; --frozen-ink:#a8c7d8;
   --warn-bg:#2e2718; --warn-line:#5c4a25; --warn-ink:#e0cfa4; --warn-strong:#d6b978;
@@ -269,17 +291,17 @@ html[data-skin="lux"][data-theme="light"]{
   --ink:#23201a; --muted:#5d574a;
   --shadow:rgba(60,48,20,.18);
 
-  --accent:#e8cf8f; --accent-ink:#6b5320; --on-accent:#241c05;
+  --accent:#f2c24a; --accent-ink:#7a5500; --on-accent:#241c05;
 
-  --got:#e8cf8f; --on-got:#241c05;
-  --got-ink:#6b5320; --swap-ink:#3d6180; --skip-ink:#7a2e33;
-  --swap:#4a7391; --on-swap:#ffffff;
-  --skip:#45191c; --on-skip:#ffffff;
+  --got:#f2c24a; --on-got:#241c05;
+  --got-ink:#7a5500; --swap-ink:#1552c4; --skip-ink:#a3162b;
+  --swap:#184d98; --on-swap:#ffffff;
+  --skip:#7a1222; --on-skip:#ffffff;
 
-  --sams:#765a18; --costco:#705d33; --custom:#2f4a34;
-  --target:#6d4a66; --walmart:#3c647e; --aldi:#566445; --dillons:#7f5358;
+  --sams:#1352cc; --costco:#bc0b20; --custom:#342a22;
+  --target:#a22090; --walmart:#844e05; --aldi:#086a1c; --dillons:#085c6c;
 
-  --plan:#6d5b8f; --plan-ink:#584a75; --on-plan:#ffffff;
+  --plan:#6a45c8; --plan-ink:#5a36b0; --on-plan:#ffffff;
 
   --frozen-bg:#dde7ec; --frozen-ink:#2f5a72;
   --warn-bg:#fdf5e3; --warn-line:#e2d3ab; --warn-ink:#6b5320; --warn-strong:#8a6a1c;
@@ -290,6 +312,69 @@ html[data-skin="lux"][data-theme="light"]{
   --bevel-hi:rgba(255,255,255,.85);
   --bevel-lo:rgba(60,48,20,.16);
   --bevel-edge:#c3b48f;
+}
+/* ============================ CLEAR ===================================
+   The third skin (v35), for colourblind eyes, and the reason the other two no
+   longer have to be. Retro and Lux each spent a release being re-cut so that
+   Got, Swap and Skip survived all three colourblindness simulations, and Lux
+   paid for it in colour: everything drifted toward the same greyed-down
+   middle. Now one skin carries that job IN FULL and the other two are free to
+   look like themselves.
+
+   BLACK AND WHITE CHROME, COLOUR ONLY WHERE IT MEANS SOMETHING. Surfaces are
+   neutral grey and the accent is plain ink, so the only colours on screen are
+   the three statuses and the store tabs - nothing competes with them.
+
+   THE STATUSES ARE TOLD APART BY LIGHTNESS FIRST AND HUE SECOND - blue Got,
+   yellow Swap, rose Skip - because lightness is the one cue every kind of
+   colourblindness keeps. Chosen by search against all three simulations, not
+   by eye, and each theme has its OWN three: every fill must also stand off the
+   idle button beside it by lightness. The first cut used one set for both
+   themes, and it drew a selected Skip in dark mode almost exactly the shade of
+   an unselected button, and a selected Swap in light mode likewise. Its
+   pairwise figures were excellent; it was measuring the wrong pairs.
+
+   THE SEVEN STORE INKS were chosen the same way: every pair held apart under
+   normal vision AND under each simulation, because a list can put any two of
+   them side by side. The probe holds Clear to that; Retro and Lux only to the
+   normal-vision half.
+
+   Geometry is Retro's. Colour only - no size, space or tap target moves. */
+html[data-skin="clear"]{
+  --bg:#121212; --panel:#1e1e1e; --panel2:#2a2a2a; --line:#444444;
+  --ink:#f2f2f2; --muted:#b4b4b4;
+  --shadow:rgba(0,0,0,.6);
+
+  --accent:#f2f2f2; --accent-ink:#ffffff; --on-accent:#111111;
+
+  --got:#315e73; --on-got:#ffffff;
+  --swap:#fef795; --on-swap:#111111;
+  --skip:#c48776; --on-skip:#111111;
+  --got-ink:#9dbcf0; --swap-ink:#fef795; --skip-ink:#ff8a70;
+
+  --sams:#12cbf5; --costco:#f67d51; --custom:#e3cdb5;
+  --target:#d28ce1; --walmart:#fafc56; --aldi:#63b650; --dillons:#46fbae;
+
+  --tab-dim:.9;
+  --bevel-edge:#000000;
+}
+html[data-skin="clear"][data-theme="light"]{
+  --bg:#f4f4f4; --panel:#ffffff; --panel2:#e6e6e6; --line:#c4c4c4;
+  --ink:#151515; --muted:#4a4a4a;
+  --shadow:rgba(0,0,0,.20);
+
+  --accent:#1a1a1a; --accent-ink:#111111; --on-accent:#ffffff;
+
+  --got:#142c55; --on-got:#ffffff;
+  --swap:#8a5f18; --on-swap:#ffffff;
+  --skip:#d19382; --on-skip:#111111;
+  --got-ink:#2c5aa0; --swap-ink:#7a5a00; --skip-ink:#8a1a10;
+
+  --sams:#3b51d3; --costco:#5c0012; --custom:#695a57;
+  --target:#a82571; --walmart:#26245e; --aldi:#155003; --dillons:#680395;
+
+  --tab-dim:.96;
+  --bevel-edge:#a8a8a8;
 }
 
 *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
@@ -964,9 +1049,13 @@ html[data-skin="lux"]{
   --px-base:1px;
   --px-sm:1px;
   --ring:3px;
+  /* v35: less white on top, more shade below. The highlight is laid over the
+     LABEL as well as the fill, and at .20 it was washing the new jewel tones
+     back toward the grey they replaced; the deeper lower half is where the
+     depth comes from. The v33 probe measures every label through this. */
   --gloss:linear-gradient(180deg,
-    rgba(255,255,255,.20) 0%, rgba(255,255,255,.07) 49%,
-    rgba(0,0,0,.09) 50%, rgba(0,0,0,.17) 100%);
+    rgba(255,255,255,.15) 0%, rgba(255,255,255,.05) 49%,
+    rgba(0,0,0,.10) 50%, rgba(0,0,0,.22) 100%);
   /* A radius, not a staircase. `inset()` keeps clip-path in play so the outline
      layer and the focus ring below still work exactly as they do in Retro. */
   --pxl-shape:inset(0 round 6px);
@@ -977,8 +1066,8 @@ html[data-skin="lux"][data-theme="light"]{
   /* Paper wants the light from higher and the shade far weaker; the dark
      recipe on a cream fill reads as dirt rather than as gloss. */
   --gloss:linear-gradient(180deg,
-    rgba(255,255,255,.55) 0%, rgba(255,255,255,.16) 49%,
-    rgba(0,0,0,.04) 50%, rgba(0,0,0,.10) 100%);
+    rgba(255,255,255,.38) 0%, rgba(255,255,255,.10) 49%,
+    rgba(0,0,0,.05) 50%, rgba(0,0,0,.13) 100%);
 }
 
 /* Sits under the list, so it is the last thing on the page rather than
@@ -1331,10 +1420,13 @@ html[data-skin="lux"][data-theme="light"]{
     <div class="seg" id="skinSeg" style="margin-top:8px">
       <button type="button" data-skin-set="retro">Retro</button>
       <button type="button" data-skin-set="lux">Lux</button>
+      <button type="button" data-skin-set="clear">Clear</button>
     </div>
-    <div class="hint">Two looks. <b>Retro</b> is the chunky one, <b>Lux</b> is the
-      smoother one in green and gold. Either works in light or dark. This is
-      your phone only &mdash; nobody else&rsquo;s changes.</div></div>
+    <div class="hint">Three looks. <b>Retro</b> is the chunky one, <b>Lux</b> is the
+      smoother one in green and gold, and <b>Clear</b> is plain black and white
+      with colours picked to be easy to tell apart if you are colour blind.
+      Any of them works in light or dark. This is your phone only &mdash;
+      nobody else&rsquo;s changes.</div></div>
   <div class="fld"><button class="wide danger" id="menuForget">⌫ Forget this device</button></div>
   <div class="hint">Add to Home Screen for an app icon — iPhone: Share → Add to Home Screen. Android: ⋮ → Add to Home screen.</div>
   <div class="hint legal-menu">&copy; 2026 Air Capital Analytics LLC. All rights reserved.<br>
@@ -1398,12 +1490,13 @@ html[data-skin="lux"][data-theme="light"]{
     <div class="seg">
       <button type="button" data-skin-set="retro">Retro</button>
       <button type="button" data-skin-set="lux">Lux</button>
+      <button type="button" data-skin-set="clear">Clear</button>
     </div>
     <p>Tap any of these to try it &mdash; the screen changes as you tap, and
       nothing is saved anywhere but this phone. <b>Auto</b> follows whatever
-      your phone already does.</p>
+      your phone already does. Colour blind? Try <b>Clear</b>.</p>
     <p>Too small to read? Tap <b>Text size</b> at the top of the screen. Light,
-      dark and the two looks are under <b>Menu &rarr; Appearance</b> later.</p>
+      dark and the looks are under <b>Menu &rarr; Appearance</b> later.</p>
   </div>
 
   <button class="wide primary" id="welcomeGo">Got it &mdash; let&rsquo;s go</button>

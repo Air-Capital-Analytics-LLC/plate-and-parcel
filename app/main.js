@@ -1255,7 +1255,8 @@ const THEMES = ['auto', 'light', 'dark'];
  * paint; if a ground colour changes, both copies move together. */
 const THEME_COLOR = {
   retro: { light: '#f2f4f8', dark: '#12141c' },
-  lux: { light: '#f5f1e8', dark: '#0f1411' }
+  lux: { light: '#f5f1e8', dark: '#0f1411' },
+  clear: { light: '#f4f4f4', dark: '#121212' }
 };
 
 /*
@@ -1266,12 +1267,14 @@ const THEME_COLOR = {
  *
  * Retro is the default and is expressed by the ABSENCE of the attribute, not
  * by `data-skin="retro"`. Every rule in the stylesheet is written for Retro and
- * Lux overrides on top, so an absent attribute is the correct fallback for a
- * phone running an older cached index.html - it lands on the skin that copy
- * already knows how to draw instead of on an unstyled half-Lux.
+ * Lux and Clear override on top, so an absent attribute is the correct
+ * fallback for a phone running an older cached index.html - it lands on the
+ * skin that copy already knows how to draw instead of on an unstyled half-Lux.
+ * The same holds for rollback: a build that predates Clear reads 'clear' from
+ * storage, does not recognise it, and draws Retro.
  */
 const SKIN_KEY = 'pnp.skin';
-const SKINS = ['retro', 'lux'];
+const SKINS = ['retro', 'lux', 'clear'];
 
 function readSkin() {
   try {
@@ -1295,8 +1298,8 @@ function readSkin() {
 function applySkin(choice) {
   const skin = SKINS.includes(choice) ? choice : readSkin();
   const root = document.documentElement;
-  if (skin === 'lux') root.setAttribute('data-skin', 'lux');
-  else root.removeAttribute('data-skin');
+  if (skin === 'retro') root.removeAttribute('data-skin');
+  else root.setAttribute('data-skin', skin);
   for (const b of document.querySelectorAll('[data-skin-set]')) {
     b.classList.toggle('on', b.dataset.skinSet === skin);
   }
