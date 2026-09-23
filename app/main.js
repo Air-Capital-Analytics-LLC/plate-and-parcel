@@ -365,6 +365,8 @@ function setSyncBadge(status, detail) {
 
 function openSheet(id) {
   $(id).classList.add('open');
+  // For the backdrop's double-tap guard at the listener.
+  $(id)._openedAt = Date.now();
   // BACK TO THE TOP. `.sheet` scrolls internally, and a sheet reopened after
   // being scrolled presents itself mid-content with its own heading off screen
   // - which reads as the app having lost its place.
@@ -472,6 +474,17 @@ function toast(msg) {
 /* ================= actions ================= */
 
 let noteTarget = null;
+/**
+ * The Swap or Skip that opened the note sheet, NOT YET WRITTEN.
+ *
+ * It used to be written on the tap, before the sheet opened, so Cancel or a tap
+ * on the backdrop closed the sheet and left the button lit - the row said
+ * Swapped, the other phones had already been told so, and nothing on screen
+ * offered a way back but tapping it again. Held here instead, it reaches the
+ * store only from Save, so EVERY other way the sheet closes leaves the row
+ * exactly as it was. Null when the sheet was opened from an existing note.
+ */
+let notePending = null;
 
 let lastAct = { id: null, act: null, at: 0 };
 
@@ -485,12 +498,13 @@ function onAct(itemId, act) {
 
   const cur = store.state.items[itemId]?.s || '';
   if (cur === act) { store.setStatus(itemId, null); return; }
+  if (act === 'swap' || act === 'skip') { openNote(itemId, act, true); return; }
   store.setStatus(itemId, act);
-  if (act === 'swap' || act === 'skip') openNote(itemId, act);
 }
 
-function openNote(itemId, st) {
+function openNote(itemId, st, pending = false) {
   noteTarget = itemId;
+  notePending = pending ? st : null;
   const swap = st === 'swap';
   $('noteTitle').textContent = swap ? 'Swapped for…' : 'Skipped — why?';
   $('noteLabel').textContent = swap ? 'What did you actually buy?' : 'Out of stock? Too expensive?';
@@ -514,7 +528,8 @@ function openNote(itemId, st) {
 
 function saveNote() {
   const v = $('noteText').value.trim();
-  const st = store.state.items[noteTarget]?.s;
+  const st = notePending || store.state.items[noteTarget]?.s;
+  notePending = null;
   if (st) store.setStatus(noteTarget, st, v);
 
   if ($('flagWrap').style.display !== 'none') {
@@ -2118,7 +2133,16 @@ function wireEvents() {
     // leaving its promise pending forever: the list looked fine and fully
     // interactive, sync never started, and an afternoon of ticks reached nobody.
     if (bg.id === 'passSheet') return;
-    bg.addEventListener('click', (e) => { if (e.target === bg) bg.classList.remove('open'); });
+    bg.addEventListener('click', (e) => {
+      if (e.target !== bg) return;
+      // A sheet appears the instant its button is tapped, so the second half of
+      // a double-tap on Swap lands on this backdrop and closed the sheet before
+      // it was seen. Harmless while Swap was written on the tap; now that only
+      // Save writes it, that double-tap would lose the Swap outright.
+      if (Date.now() - (bg._openedAt || 0) < 600) return;
+      bg.classList.remove('open');
+      lastAct = { id: null, act: null, at: 0 };   // same reason as Cancel above
+    });
   });
 
   $('planBtn').onclick = () => { if (blockedWhileLocked()) return; planning = !planning; render(); scrollTo({ top: 0 }); };
