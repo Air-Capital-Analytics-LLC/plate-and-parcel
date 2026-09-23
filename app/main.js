@@ -261,7 +261,7 @@ function paint() {
     // record blanks the app on every device that merged it, permanently,
     // because the record is persisted and re-thrown on every later paint.
     listEl.innerHTML = '<div class="empty">Something on this list could not be shown.'
-      + '<br><br>Tap <b>⋯</b> then <b>Forget this device</b> if this keeps happening.</div>';
+      + '<br><br>Tap <b>Menu</b> then <b>Forget this device</b> if this keeps happening.</div>';
   }
 }
 

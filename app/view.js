@@ -713,13 +713,13 @@ export function listHTML(state, opts = {}) {
       // all in again" to the person who did not tap Empty. §1, the list is
       // never silently smaller, read from the receiving end.
       html = c.total === 0 && sweptAt(state)
-        ? `<div class="empty">This list was emptied for everyone.<br><br>Tap <b>&#8943;</b> then <b>Put back items that were taken off</b> to bring it all back.</div>`
+        ? `<div class="empty">This list was emptied for everyone.<br><br>Tap <b>Menu</b> then <b>Put back items that were taken off</b> to bring it all back.</div>`
         : c.total === 0
         ? (anyPlanned(state)
           ? `<div class="empty">Nothing from this store is on this trip.<br><br>Tap <b>Plan</b> to add things, or <b>+</b> for a one-off.</div>`
           : (useCatalogue
             ? `<div class="empty">Nothing on the list for this store.<br>Tap <b>+</b> to add something.</div>`
-            : `<div class="empty">This list is empty.<br><br>Tap <b>+</b> to add one thing, or <b>&#8943;</b> then <b>Paste a list</b> to add several at once.</div>`))
+            : `<div class="empty">This list is empty.<br><br>Tap <b>+</b> to add one thing, or <b>Menu</b> then <b>Paste a list</b> to add several at once.</div>`))
         : `<div class="empty">&#9989; Everything here is handled.<br><br>Tap <b>Show done</b> to see it again.</div>`;
     }
   }

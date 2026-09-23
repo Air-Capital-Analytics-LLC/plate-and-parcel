@@ -204,8 +204,9 @@ html[data-theme="light"]{
 }
 /* ============================ LUX =====================================
    The second skin (v33). A gentleman's club at night: hunter green panelling,
-   and jewel tones on it - gold, ruby, sapphire (deepened in v35 from brass,
-   oxblood and steel, which were too faint to read). It is COLOUR AND ORNAMENT ONLY - not one size,
+   and jewel tones on it - emerald, sapphire, ruby, with gold as the app's own
+   accent (deepened in v35 from brass, oxblood and steel, which were too faint
+   to read; Got moved from gold to emerald in v36). It is COLOUR AND ORNAMENT ONLY - not one size,
    space or tap target moves, so nothing has to be re-measured at the Largest
    text setting.
 
@@ -234,8 +235,18 @@ html[data-skin="lux"]{
      carry the marks and still clear 4.5:1 everywhere. */
   --accent:#e8b43a; --accent-ink:#f0c24f; --on-accent:#1a1f16;
 
-  --got:#e8b43a; --on-got:#1a1f16;
-  --got-ink:#f0c24f; --swap-ink:#7aabff; --skip-ink:#ff8a90;
+  /* Got is EMERALD since v36, not the gold accent: green is what "got it"
+     means in every other skin, and gold on Got made the one status that
+     matters most look like the app's own colour. It is the LIGHT fill of the
+     three, with a dark label, because the probe holds lightest-to-darkest at
+     2.5:1 and ruby Skip is already the dark end - a deep forest green would
+     sit beside it and fail. The first cut (#1fa35e / #1f9a58) cleared 4.5:1
+     on the hexes and FAILED through the gloss at 4.24 / 4.45, because the
+     shade darkens the bottom of the button under a dark label.
+     Not held apart from ruby Skip under red-green colourblindness (~1.1:1,
+     whatever the green): the marks carry that, and Clear is the skin for it. */
+  --got:#31bd72; --on-got:#08140c;
+  --got-ink:#4fd08a; --swap-ink:#7aabff; --skip-ink:#ff8a90;
   --swap:#2461b8; --on-swap:#ffffff;
   --skip:#8e1b2c; --on-skip:#ffffff;
 
@@ -293,8 +304,8 @@ html[data-skin="lux"][data-theme="light"]{
 
   --accent:#f2c24a; --accent-ink:#7a5500; --on-accent:#241c05;
 
-  --got:#f2c24a; --on-got:#241c05;
-  --got-ink:#7a5500; --swap-ink:#1552c4; --skip-ink:#a3162b;
+  --got:#2bb36a; --on-got:#06130b;
+  --got-ink:#0b6b3a; --swap-ink:#1552c4; --skip-ink:#a3162b;
   --swap:#184d98; --on-swap:#ffffff;
   --skip:#7a1222; --on-skip:#ffffff;
 
@@ -442,6 +453,17 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .sizebtn .aa{font-size:15px; font-weight:700; color:var(--ink);}
 .sizebtn .lbl{font-size:9px; letter-spacing:.02em; color:var(--muted); white-space:nowrap;}
 .sizebtn.set .aa{color:var(--accent-ink);}
+/* THREE BARS, DRAWN, for Menu (v36; it was a typed "⋯"). Three bars is what
+   people now expect a menu to look like. Drawn by the BOX, not typed as "☰",
+   for the reason the Add button's + is (LEDGER M36): a glyph sits wherever
+   each phone's font puts it, and the font on this machine is not the font on
+   theirs. 16px is the height of the "Aa" line beside it, so the row does not
+   move; 3px bars match the weight of that bold text. */
+.sizebtn .burger{width:17px; height:16px;
+  background:
+    linear-gradient(currentColor,currentColor) center 2px/17px 3px no-repeat,
+    linear-gradient(currentColor,currentColor) center/17px 3px no-repeat,
+    linear-gradient(currentColor,currentColor) center calc(100% - 2px)/17px 3px no-repeat;}
 .badge{font-size:clamp(10px, .64rem, 12.5px); padding:4px 7px; border-radius:7px; background:var(--panel2); color:var(--muted); white-space:nowrap; flex-shrink:0;}
 .badge.ok{color:var(--badge-ok);} .badge.warn{color:var(--badge-warn);} .badge.bad{color:var(--badge-bad);}
 /* Shop chips in the new-list sheet. Wraps, because seven of them will not sit
@@ -554,7 +576,12 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
    the accessibility cue washed out on precisely the rows it exists for.
    So the dim is applied to the CONTENTS instead, and `.mk` is not in the list.
    The mark is the one thing on a finished row that stays at full strength,
-   which is also the right answer visually: it is what the row now says. */
+   which is also the right answer visually: it is what the row now says.
+   THE PRESSED BUTTON IS THE SAME CASE, and v36 found it the same way: the dim
+   sat on `.acts`, so a selected Got or Skip was only ever seen at 55% - a Got
+   button was never actually drawn in the colour chosen for it, and a report
+   that Lux's Got "has no real green" was a report about this line. Only the
+   two buttons NOT chosen recede now. */
 .item.got .nmt,.item.skip .nmt,
 .item.got .det,.item.skip .det,
 .item.got .alt,.item.skip .alt,
@@ -566,7 +593,8 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .item.got .qty,.item.skip .qty,
 .item.got .rm,.item.skip .rm,
 .item.got .noteline,.item.skip .noteline,
-.item.got .acts,.item.skip .acts{opacity:.55;}
+.item.got .acts button:not([aria-pressed="true"]),
+.item.skip .acts button:not([aria-pressed="true"]){opacity:.55;}
 .item.cust{border-left-color:var(--custom);}
 /* The strike now lands on the NAME only, not on the whole row. It used to sit
    on `.nm`, which meant the price, the quantity badge, the FROZEN warning and
@@ -1113,7 +1141,7 @@ html[data-skin="lux"][data-theme="light"]{
       <span class="aa">📋</span><span class="lbl">Trip</span>
     </button>
     <button class="sizebtn" id="btnMenu" title="Menu" aria-label="Menu">
-      <span class="aa">⋯</span><span class="lbl">Menu</span>
+      <span class="aa burger" aria-hidden="true"></span><span class="lbl">Menu</span>
     </button>
   </div>
   <div class="listname" id="listName"></div>
