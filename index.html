@@ -841,9 +841,16 @@ input:disabled{opacity:.5; background:var(--panel);}
    were 14px apart with the red one full-width directly under the halved Save
    button, and the thumb arrives there already moving. */
 .sep{border:none; border-top:1px solid var(--line); margin:18px 0 0;}
+/* The new-list offer shares ALL THREE rules, not only the first. v32 moved it
+   off `.lostbar` and widened just the layout line, so its buttons fell through
+   to the bare `button` rule: no padding, the warnbox's small type, and the
+   pixel bevel eating what little box was left - "Later" barely legible on a
+   desktop and broken on a phone. v33_probe §6 now holds every bar's buttons. */
 .offerbar,
 .lostbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
+.offerbar span,
 .lostbar span{flex:1 1 60%; min-width:180px;}
+.offerbar button,
 .lostbar button{padding:9px 16px; font-size:.82rem; font-weight:700;
   --fill:var(--panel2); color:var(--warn-strong);}
 .installbar{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
