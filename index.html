@@ -397,11 +397,27 @@ html[data-skin="clear"][data-theme="light"]{
 html{-webkit-text-size-adjust:100%; font-size:16px;}
 html.t1{font-size:18.5px;}
 html.t2{font-size:21px;}
+/* SPACING IS TWO NUMBERS (v41), and every button in the app is placed by them.
+   Reported with a screenshot, 2026-09-29: "Choose what to buy" sat touching the
+   store tabs - 0px, measured - while Got/Swap/Skip were 6px apart, the header
+   buttons 4, the Add sheet's buttons 8, the + to the pencil 11, and a card's
+   buttons sat 15px from its left edge, 12 from its right and 11 from its
+   bottom. Each rule had picked its own number.
+     --gap    between any two neighbouring controls, across AND down.
+     --inset  from a container's edge to the controls in it: the page, a card,
+              the floating buttons against the screen.
+     --sheet-inset  the same idea for a sheet, which is its own surface and
+              keeps its own (larger) margin - but the same on every side.
+   PX, NOT REM, on purpose: the text grows with Text size and the buttons grow
+   around it, but the space BETWEEN buttons stays put, which is what keeps four
+   store tabs on one row at Largest on a 320px phone. `tests/v41_probe.mjs`
+   holds every rule below to these tokens. */
+:root{--gap:8px; --inset:12px; --sheet-inset:16px;}
 body{
   background:var(--bg); color:var(--ink);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
   max-width:560px; margin:0 auto; font-size:1rem; line-height:1.4;
-  padding:0 12px calc(96px + env(safe-area-inset-bottom));
+  padding:0 var(--inset) calc(96px + env(safe-area-inset-bottom));
 }
 /* The title is an IMAGE now - icon and wordmark in one - so it carries no type
    of its own. The h1 stays for the document outline and the alt text carries
@@ -440,8 +456,8 @@ input,textarea{font-family:inherit; font-size:max(16px,1rem); width:100%; color:
 .fatal{padding:40px 22px; font-size:1rem; line-height:1.6; text-align:center;}
 
 header{position:sticky; top:0; z-index:30; background:var(--bg);
-  padding:calc(10px + env(safe-area-inset-top)) 0 8px; border-bottom:1px solid var(--line); margin-bottom:10px;}
-.hrow{display:flex; align-items:center; gap:4px; margin-bottom:8px;}
+  padding:calc(var(--inset) + env(safe-area-inset-top)) 0 8px; border-bottom:1px solid var(--line); margin-bottom:10px;}
+.hrow{display:flex; align-items:center; gap:var(--gap); margin-bottom:var(--gap);}
 .hrow h1{flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .iconbtn{width:38px; height:38px; font-size:1.02rem; flex-shrink:0; display:grid; place-items:center;}
 /* Every header button carries a word, because an icon alone is a guess. These
@@ -472,7 +488,7 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 /* A list row and its settings button, side by side. The row keeps the whole
    width it had; the button is fixed so a long list name cannot squeeze it to
    nothing. */
-.listrowwrap{display:flex; gap:6px; align-items:stretch; margin-bottom:8px;}
+.listrowwrap{display:flex; gap:var(--gap); align-items:stretch; margin-bottom:var(--gap);}
 .listrowwrap .listrow{flex:1; margin-bottom:0; min-width:0;}
 .listcog{flex-shrink:0; padding:0 14px; font-size:.78rem; font-weight:700;
   color:var(--muted); --fill:var(--panel2);}
@@ -493,7 +509,7 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .linkid{display:block; margin-top:3px; font-size:.72rem; color:var(--muted);
   font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-.shoppick{display:flex; flex-wrap:wrap; gap:6px;}
+.shoppick{display:flex; flex-wrap:wrap; gap:var(--gap);}
 .shoppick button{padding:10px 12px; font-size:.82rem; font-weight:600;
   color:var(--muted); --fill:var(--panel2);}
 .shoppick button.on{--fill:var(--accent); color:var(--on-accent); font-weight:700;}
@@ -502,7 +518,9 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
    two - the row's height is load-bearing for the sticky header. */
 .tab{min-width:0;}
 .tab .face{display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-.tabs{display:flex; gap:6px;}
+/* margin-top: the tabs used to sit UNDER the plan bar's margin only, so with
+   the bar moved above them they touched it - 0px (v41, the screenshot). */
+.tabs{display:flex; gap:var(--gap); margin-top:var(--gap);}
 .tab{flex:1; padding:11px 4px; font-size:.82rem; font-weight:600; text-align:center;
   --fill:var(--panel2); color:var(--muted); line-height:1.25;}
 .tab .n{display:block; font-size:.68rem; font-weight:500; opacity:.92; margin-top:1px;}
@@ -536,10 +554,10 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
    size up because they cannot read small text. It is a fixed string, so it
    cannot reflow mid-scroll the way a live counter would. */
 .listname{text-align:center; font-size:1rem; font-weight:700; color:var(--accent-ink);
-  margin-top:7px; line-height:1.25;
+  margin-top:0; line-height:1.25;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .listname:empty{display:none;}
-.pbar{height:4px; background:var(--panel2); border-radius:2px; margin-top:8px; overflow:hidden;}
+.pbar{height:4px; background:var(--panel2); border-radius:2px; margin-top:var(--gap); overflow:hidden;}
 /* `--got-ink`, not `--got`. The fill is a pale mint in both themes - that
    paleness is what buys the lightness spread the status buttons need - and a
    pale mint bar on the `--panel2` track measured 1.07:1 in light mode, which is
@@ -563,7 +581,11 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
   background:var(--panel); border-left:3px solid var(--accent-ink); border-radius:8px; padding:7px 11px;}
 .sec b{font-size:.84rem; letter-spacing:.08em; text-transform:uppercase; color:var(--accent-ink);}
 .sec span{font-size:.72rem; color:var(--muted); flex-shrink:0;}
-.item{background:var(--panel); border-radius:var(--radius); padding:11px 12px; margin-bottom:8px; border-left:3px solid transparent;}
+/* THE SAME INSET ON ALL FOUR SIDES, counting the status stripe: the left
+   padding gives back the stripe's 3px, so a card's buttons sit --inset from
+   every edge. It was 15 left, 12 right, 11 top and bottom (measured, v41). */
+.item{background:var(--panel); border-radius:var(--radius); margin-bottom:var(--gap); border-left:3px solid transparent;
+  padding:var(--inset) var(--inset) var(--inset) calc(var(--inset) - 3px);}
 .item.got{border-left-color:var(--got-ink);}
 .item.swap{border-left-color:var(--swap-ink);}
 .item.skip{border-left-color:var(--skip-ink);}
@@ -622,7 +644,7 @@ header{position:sticky; top:0; z-index:30; background:var(--bg);
 .mk-got{color:var(--got-ink);}
 .mk-swap{color:var(--swap-ink);}
 .mk-skip{color:var(--skip-ink);}
-.nm{font-weight:600; font-size:.97rem; margin-bottom:2px; display:flex; align-items:center; flex-wrap:wrap; gap:5px;}
+.nm{font-weight:600; font-size:.97rem; margin-bottom:2px; display:flex; align-items:center; flex-wrap:wrap; gap:var(--gap) 5px;}
 .frozen{font-size:.6rem; background:var(--frozen-bg); color:var(--frozen-ink); border-radius:5px; padding:2px 6px; letter-spacing:.05em;}
 .who{font-size:.6rem; background:var(--panel2); color:var(--muted); border-radius:5px; padding:2px 6px; font-weight:500;}
 /* What the row costs, as somebody on this list typed it. NOT `.price` — that
@@ -694,14 +716,20 @@ input:disabled{opacity:.5; background:var(--panel);}
    transparent background, tucked past the quantity stepper - readable as
    decoration, not as something to press. Now it is the same size and the same
    bevel as the stepper beside it, in the app's own colour. */
-.rm{margin-left:6px; width:34px; height:34px; font-size:1rem; line-height:1;
+/* The row's buttons are one group (`.ctl`, v41): the stepper and the pencil,
+   pushed right, --gap apart, wrapping TOGETHER onto the next line when a long
+   name leaves no room. Before, the pencil sat 5 + 6 = 11px from the + and, on a
+   long name, wrapped off alone to the left. The name row's own gap is for the
+   text and its badges; between wrapped lines it is --gap like everything else. */
+.ctl{display:inline-flex; align-items:center; gap:var(--gap); margin-left:auto; flex-shrink:0;}
+.rm{width:34px; height:34px; font-size:1rem; line-height:1;
   flex-shrink:0; --fill:var(--panel2); color:var(--accent-ink); font-weight:700;}
 .det{font-size:.8rem; color:var(--muted);}
 .det .price{color:var(--accent-ink); font-weight:600;}
 .alt{font-size:.74rem; color:var(--muted); margin-top:3px; opacity:.85;}
 .why{font-size:.76rem; color:var(--muted); margin-top:3px;}
 .getat{font-size:.76rem; color:var(--custom); margin-top:3px; font-weight:600;}
-.acts{display:flex; gap:6px; margin-top:9px;}
+.acts{display:flex; gap:var(--gap); margin-top:var(--gap);}
 .acts button{flex:1; padding:12px 4px; font-size:.82rem; font-weight:600; color:var(--muted);
   --fill:var(--panel2);}
 .acts button.on-got{--fill:var(--got); color:var(--on-got);}
@@ -713,7 +741,7 @@ input:disabled{opacity:.5; background:var(--panel);}
 .pencil{opacity:.7;}
 .empty{text-align:center; color:var(--muted); font-size:.85rem; padding:34px 14px; line-height:1.6;}
 
-.fab{position:fixed; right:14px; bottom:calc(14px + env(safe-area-inset-bottom));
+.fab{position:fixed; right:var(--inset); bottom:calc(var(--inset) + env(safe-area-inset-bottom));
   width:56px; height:56px; --fill:var(--accent); color:var(--on-accent);
   font-size:1.8rem; font-weight:700; z-index:35;
   -webkit-clip-path:var(--pxl-shape-round); clip-path:var(--pxl-shape-round);
@@ -759,19 +787,27 @@ input:disabled{opacity:.5; background:var(--panel);}
    It pairs with the + without competing: filled gold creates, outlined gold
    toggles a view. --accent-ink rather than --accent because raw #ffd43b is a
    nearly invisible hairline on the light background. */
-.fab2{position:fixed; left:14px; bottom:calc(14px + env(safe-area-inset-bottom));
-  height:46px; padding:0 16px; --fill:var(--panel2);
-  --bevel-edge:var(--accent-ink);
+.fab2{position:fixed; left:var(--inset); bottom:calc(var(--inset) + env(safe-area-inset-bottom));
+  height:46px; padding:0 16px;
+  /* INVERTED: the page's own ink as the fill, its ground as the words - a light
+     pill on the dark themes, a dark pill on the light ones (v41, chosen by
+     Aaron from four rendered options). It was --panel2, the fill of every
+     button ON the cards it floats over: 1.1-1.2:1 against a card in all six
+     skin x theme pairs (measured), so only its thin edge said it was not one
+     more row button. Now 13.7-18.3:1, and the words 14.4-16.7:1. Not grey -
+     grey reads as switched off - and not gold, which is the + beside it. */
+  --fill:var(--ink); color:var(--bg);
+  --bevel-edge:var(--ink);
   font-size:.83rem; font-weight:600; z-index:35;
   filter:drop-shadow(0 3px 7px var(--shadow));}
 .sheet-bg{position:fixed; inset:0; background:rgba(0,0,0,.72); display:none; align-items:flex-end; justify-content:center; z-index:60;}
 .sheet-bg.open{display:flex;}
 .sheet{background:var(--panel); width:100%; max-width:560px; border-radius:20px 20px 0 0;
-  padding:18px 16px calc(20px + env(safe-area-inset-bottom)); max-height:88vh; overflow-y:auto;}
+  padding:var(--sheet-inset) var(--sheet-inset) calc(var(--sheet-inset) + env(safe-area-inset-bottom)); max-height:88vh; overflow-y:auto;}
 .sheet h2{font-size:1.08rem; margin-bottom:12px; color:var(--accent-ink);}
 .sheet .fld{margin-bottom:11px;}
 .sheet label{font-size:.75rem; color:var(--muted); display:block; margin-bottom:4px;}
-.sheet .row{display:flex; gap:8px;}
+.sheet .row{display:flex; gap:var(--gap);}
 .sheet .row button{flex:1; padding:13px; font-weight:600;}
 /* The body of the app's own "are you sure" (LEDGER M22). In REM on purpose:
    this is the text the OS dialog used to draw at the system size, ignoring the
@@ -817,16 +853,16 @@ input:disabled{opacity:.5; background:var(--panel);}
    item - it is the one thing to do - so it centres. */
 .wide.primary{text-align:center;}
 .primary{--fill:var(--accent) !important; color:var(--on-accent) !important;}
-.seg{display:flex; gap:6px;}
+.seg{display:flex; gap:var(--gap);}
 .seg button{flex:1; padding:11px 4px; font-size:.82rem; color:var(--muted);}
 .seg button.on{--fill:var(--accent); color:var(--on-accent); font-weight:700;}
 #report{white-space:pre-wrap; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.76rem; min-height:220px;}
 .hint{font-size:.74rem; color:var(--muted); line-height:1.5; margin-top:8px;}
 .danger{color:var(--danger);}
 .err{font-size:.78rem; color:var(--badge-bad); min-height:1.1em; margin-top:6px;}
-.warnbox{background:var(--warn-bg); border:1px solid var(--warn-line); border-radius:10px; padding:10px 12px;
-  font-size:.76rem; color:var(--warn-ink); line-height:1.5; margin-bottom:10px;}
-.listrow{display:flex; align-items:center; gap:8px; margin-bottom:8px; text-align:left;}
+.warnbox{background:var(--warn-bg); border:1px solid var(--warn-line); border-radius:10px; padding:var(--inset);
+  font-size:.76rem; color:var(--warn-ink); line-height:1.5; margin-bottom:var(--gap);}
+.listrow{display:flex; align-items:center; gap:8px; margin-bottom:var(--gap); text-align:left;}
 .listrow.on{--bevel-edge:var(--accent);}
 .listrow .tag{font-size:.64rem; font-weight:600; background:var(--accent); color:var(--on-accent);
   border-radius:5px; padding:2px 6px; margin-left:auto; flex-shrink:0;}
@@ -847,15 +883,15 @@ input:disabled{opacity:.5; background:var(--panel);}
    pixel bevel eating what little box was left - "Later" barely legible on a
    desktop and broken on a phone. v33_probe §6 now holds every bar's buttons. */
 .offerbar,
-.lostbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
+.lostbar{display:flex; align-items:center; gap:var(--gap); flex-wrap:wrap; margin-bottom:var(--gap);}
 .offerbar span,
 .lostbar span{flex:1 1 60%; min-width:180px;}
 .offerbar button,
 .lostbar button{padding:9px 16px; font-size:.82rem; font-weight:700;
   --fill:var(--panel2); color:var(--warn-strong);}
-.installbar{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+.installbar{display:flex; align-items:center; gap:var(--gap); flex-wrap:wrap;
   background:var(--panel2); border:1px solid var(--line); border-radius:var(--radius);
-  padding:11px 12px; margin-bottom:10px; font-size:.83rem; color:var(--muted); line-height:1.4;}
+  padding:var(--inset); margin-bottom:var(--gap); font-size:.83rem; color:var(--muted); line-height:1.4;}
 .installbar span{flex:1 1 100%;}
 .installbar button{padding:9px 14px; font-size:.8rem; font-weight:600;
   --fill:var(--accent); color:var(--on-accent);}
@@ -865,7 +901,9 @@ input:disabled{opacity:.5; background:var(--panel);}
 #installBody .hint{font-size:.78rem; color:var(--muted);}
 ol.steps{margin:0 0 10px 20px; font-size:.9rem; line-height:1.75;}
 ol.steps li{margin-bottom:4px;}
-.qty{display:inline-flex; align-items:center; gap:2px; margin-left:auto; flex-shrink:0;}
+/* 2px, not --gap: − 1 + is ONE control, a number with its two buttons, not
+   three neighbours. Spread to 8px apiece it reads as three separate things. */
+.qty{display:inline-flex; align-items:center; gap:2px; flex-shrink:0;}
 .qty button{width:34px; height:34px; font-size:1.1rem; font-weight:700; line-height:1;
   --fill:var(--panel2); color:var(--ink); border:none; padding:0;
   --px:2px; -webkit-clip-path:var(--pxl-shape-sm); clip-path:var(--pxl-shape-sm);}
@@ -874,7 +912,7 @@ ol.steps li{margin-bottom:4px;}
 .qnum{min-width:26px; text-align:center; font-size:.9rem; font-weight:700; color:var(--ink);}
 .qtybadge{font-size:.66rem; font-weight:700; background:var(--accent); color:var(--on-accent);
   border-radius:5px; padding:2px 6px;}
-.planbar{width:100%; margin-top:8px; padding:11px; font-size:.95rem; font-weight:700;
+.planbar{width:100%; margin-top:var(--gap); padding:11px; font-size:.95rem; font-weight:700;
   letter-spacing:.02em; --fill:var(--panel); color:var(--plan-ink);
   --bevel-edge:var(--plan-ink);}
 .planbar.on{--fill:var(--plan); color:var(--on-plan); --bevel-edge:var(--plan-ink);}
@@ -884,12 +922,12 @@ body.planning .item{opacity:1;}
 .tickbox{display:inline-grid; place-items:center; width:20px; height:20px; flex-shrink:0;
   border:2px solid var(--line); border-radius:6px; font-size:.8rem; color:var(--on-plan);}
 .item.plan.picked .tickbox{background:var(--plan); border-color:var(--plan);}
-.planbtn{width:100%; margin-top:9px; padding:11px; font-size:.82rem; font-weight:600; color:var(--muted);}
+.planbtn{width:100%; margin-top:var(--gap); padding:11px; font-size:.82rem; font-weight:600; color:var(--muted);}
 .item.plan.picked .planbtn{--fill:var(--plan); color:var(--on-plan);}
 /* v39 - search while choosing, and what was taken off. The box sits on the
    same row as its Clear button so the sticky header grows by one line, not
    two, at the Largest text size on a 320px phone. */
-.findbar{display:flex; gap:8px; margin-top:8px; align-items:stretch;}
+.findbar{display:flex; gap:var(--gap); margin-top:var(--gap); align-items:stretch;}
 .findbar[hidden]{display:none;}
 .findbar input{flex:1; min-width:0; margin:0;}
 /* The placeholder is the box's only visible label, and the browser default is
@@ -925,7 +963,7 @@ body.planning.finding:not(.showtabs) #tabs{display:none;}
 .addmatches{margin-top:8px;}
 .addmatches[hidden]{display:none;}
 .amhead{font-size:.92rem; font-weight:700; color:var(--ink); margin-bottom:2px;}
-.sheet .amatch{display:block; width:100%; text-align:left; margin-top:8px; padding:9px 12px;
+.sheet .amatch{display:block; width:100%; text-align:left; margin-top:var(--gap); padding:9px 12px;
   border:1px solid var(--line); line-height:1.35;}
 .amatch > span{display:block;}
 .amname{font-weight:700;}

@@ -788,7 +788,7 @@ export function itemHTML(item, state, opts = {}) {
     const on = !!state.plan[item.id]?.p;
     return `<div class="item plan${on ? ' picked' : ''}" data-id="${esc(item.id)}">`
       + `<div class="nm"><span class="tickbox" aria-hidden="true">${on ? '&#10003;' : ''}</span>`
-      + `${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${stepper}</div>`
+      + `${esc(text)}${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}<span class="ctl">${stepper}</span></div>`
       + body + flagRow
       + `<button class="planbtn" data-plan="${esc(item.id)}" aria-pressed="${on}">`
       + `${on ? 'On this trip' : 'Add to trip'}</button></div>`;
@@ -806,7 +806,11 @@ export function itemHTML(item, state, opts = {}) {
 
   return `<div class="item${item.custom ? ' cust' : ''}${st ? ' ' + st : ''}${flagged ? ' flagged' : ''}" data-id="${esc(item.id)}">`
     + `<div class="nm">${rowMark}<span class="nmt">${esc(text)}</span>`
-    + `${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${priceTag}${whoTag}${stepper}${removeBtn}</div>`
+    // `.ctl` HOLDS THE ROW'S BUTTONS TOGETHER (v41). Loose in the name row,
+    // the pencil wrapped away from its stepper whenever the name was long -
+    // alone on a line of its own at the left, even at full width - so the
+    // stepper and the pencil move as one group, right-aligned, `--gap` apart.
+    + `${frozen ? '<span class="frozen">FROZEN</span>' : ''}${qtyBadge}${priceTag}${whoTag}<span class="ctl">${stepper}${removeBtn}</span></div>`
     + body + flagRow
     + `<div class="acts" role="group" aria-label="${esc(text)}">`
     + `<button class="pxl ${st === 'got' ? 'on-got' : ''}" data-act="got" aria-pressed="${st === 'got'}"><span class="mk" aria-hidden="true">${MARK.got}</span> Got</button>`
