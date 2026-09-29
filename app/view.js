@@ -8,6 +8,7 @@
 
 import { DATA } from './data.js';
 import { STATUSES, MIN_QTY, MAX_QTY, MAX_PRICE, SHOP_POOL, LEGACY_SHOPS } from './store.js';
+import { matcher } from './find.js';
 
 export const flagKey = (itemId, storeId) => itemId + '@' + storeId;
 
@@ -292,6 +293,21 @@ function sweptOut(state, id, at) {
   return at > (rec?.t || 0);
 }
 
+/**
+ * THE ONE ANSWER to "is this row hidden on this list", whichever way it went.
+ *
+ * `buildGroups` skips exactly these rows and `takenOff` offers exactly these
+ * rows back, so the two are complements per tab and must never be written
+ * separately again: a new reason to hide a row, added to one and not the
+ * other, would make that row vanish with no way back - which is the one thing
+ * "Taken off this list" exists to prevent. The v39 review fuzzed 400 random
+ * states against the pair and found no row both shown and offered, and none
+ * with a record that was neither.
+ */
+function hiddenOnList(state, id, at) {
+  return !!(state.added || {})[id]?.del || sweptOut(state, id, at);
+}
+
 export function buildGroups(state, storeId) {
   // Never index blind. A corrupt `ui.store` reaching here threw on every paint,
   // which the renderer's catch then turned into a permanent error card offering
@@ -317,8 +333,7 @@ export function buildGroups(state, storeId) {
     for (const it of sec.items) {
       baseIds.add(it.id);
       const o = added[it.id];
-      if (o && o.del) continue;                       // removed from this list
-      if (sweptOut(state, it.id, at)) continue;       // emptied for everyone
+      if (hiddenOnList(state, it.id, at)) continue;   // taken off, or emptied for everyone
       // ON THIS TAB? A catalogue row moved elsewhere is hidden here — but v32
       // lets it be on several at once, so the question is no longer equality.
       if (o && !onShop(o, storeId)) continue;
@@ -333,8 +348,8 @@ export function buildGroups(state, storeId) {
   const mine = [];
   for (const id of Object.keys(added)) {
     const a = added[id];
-    if (!a || a.del || !onShop(a, storeId)) continue;
-    if (sweptOut(state, id, at)) continue;            // emptied for everyone
+    if (!a || !onShop(a, storeId)) continue;
+    if (hiddenOnList(state, id, at)) continue;        // taken off, or emptied for everyone
     if (baseIds.has(id)) continue;                    // already shown above
     mine.push({ id, name: a.name, detail: a.note || '', mine: !a.cat, edited: !!a.cat, editable: true, by: a.by });
   }
@@ -343,6 +358,127 @@ export function buildGroups(state, storeId) {
     out.push({ sec: 'ADDED', items: mine });
   }
   return out;
+}
+
+/**
+ * A catalogue row's own name and every shop the catalogue lists it under
+ * (`store`-first order), in one walk. Null for anything that is not a
+ * catalogue row - which is everything, on any list but the household one,
+ * because `baseGroups` is empty there.
+ */
+function catalogueEntry(id) {
+  const g = baseGroups();
+  let name = '';
+  const shops = [];
+  for (const s of Object.keys(g)) {
+    for (const sec of g[s]) {
+      const it = sec.items.find((i) => i.id === id);
+      if (it) { if (!name) name = it.name; shops.push(s); break; }
+    }
+  }
+  return shops.length ? { name, shops } : null;
+}
+
+/**
+ * The shops a catalogue row's FIRST record must carry, whoever writes it -
+ * Take it off (`deleteEdited`) and Put back (`putBack`) both come through
+ * here, so there is one rule and not two (v39 review: the first cut read Take
+ * it off's shops from the edit sheet's picker, which the person can have
+ * changed before tapping, and that was M41 again through a side door).
+ *
+ * EVERY SHOP THE CATALOGUE LISTS IT UNDER THAT THIS LIST SHOWS. A record is
+ * the truth about its shops once it exists, so one written with Sam's alone
+ * pins a both-club row to Sam's for good (M41; the per-row Empty lost 44 of 58
+ * Costco rows the same way). And not a switched-off shop: `shopsFor` gives a
+ * tab back to any shop holding a live record, so writing a closed Costco
+ * would re-open it on every phone as a side effect of a tap on something else
+ * - the reason the edit sheet's pickers show only the list's own shops, too.
+ * The catalogue's full set is the fallback only when none of it is showing,
+ * and then the tab coming back IS the point: the row has nowhere else to be.
+ *
+ * KNOWN, AND THE SAME AS THE EDIT SHEET: a both-club row put back while Costco
+ * is switched off is written as Sam's only, so switching Costco back on does
+ * not bring that one row with it. Its Edit sheet's shop buttons put it back.
+ */
+export function firstRecordShops(state, id) {
+  const entry = catalogueEntry(id);
+  if (!entry) return [];
+  const tabs = new Set(shopsFor(state).map((s) => s.id));
+  const shown = entry.shops.filter((s) => tabs.has(s));
+  return shown.length ? shown : entry.shops;
+}
+
+/**
+ * What `store.putBack` may need for a catalogue row: the catalogue's name, and
+ * the shops for a first record. The store uses the shops ONLY when the row has
+ * no record yet - once it has one, the record is the truth - and the name only
+ * when the record's own is blank (the v39 review found that branch unreachable
+ * when this returned null for any row with a record). Null for a row the
+ * catalogue does not know.
+ */
+export function freshRecordFor(state, id) {
+  const entry = catalogueEntry(id);
+  if (!entry || !entry.name) return null;
+  const shops = firstRecordShops(state, id);
+  return { name: entry.name, store: shops[0], also: shops.slice(1), cat: true };
+}
+
+/** A name as it is shown, without the FROZEN marker the row draws separately.
+ *  Toasts and confirms use it so they name the item the way the row does. */
+export function plainName(name) { return splitFrozen(name).text; }
+
+/**
+ * Everything this tab once held that is hidden now, newest first: taken off,
+ * removed, or emptied away. What "Choose what to buy" offers to put back.
+ *
+ * THE SAME PER-LIST STATE `buildGroups` READS, and nothing else - so another
+ * list's items cannot appear here any more than they can appear on the list
+ * itself. A list is its own `pnp.v1:<id>` on the phone, its own
+ * `lists/<id>` in the database, and every record is sealed to that path (a
+ * record copied across lists fails to decrypt). The catalogue is the fourth
+ * gate: it exists only on the household list, so on any other list this can
+ * only ever contain things somebody typed into THAT list.
+ *
+ * WHICH TAB, by the same rule `buildGroups` uses: once an item has a record,
+ * the record's shops decide; until then, the catalogue's. The one addition is
+ * an item whose every shop has since been switched off on this list - it has
+ * no tab to be listed under, so it is listed under the first, rather than
+ * nowhere (§1, the list is never silently smaller). Put back, it becomes an
+ * ordinary orphan and `shopsFor` gives its shop a tab again.
+ *
+ * `when` orders them: a row taken off on its own went when its record says; a
+ * row the sweep hid went when the list was emptied.
+ */
+export function takenOff(state, storeId) {
+  const added = state.added || {};
+  const at = sweptAt(state);
+  const shops = shopsFor(state);
+  const tabs = new Set(shops.map((s) => s.id));
+  const listedHere = (rec) => onShop(rec, storeId)
+    || (storeId === shops[0].id && !shopsOf(rec).some((s) => tabs.has(s)));
+  const gone = (id) => hiddenOnList(state, id, at);
+  const out = [];
+  const seen = new Set();
+
+  for (const sec of baseGroups()[storeId] || []) {
+    for (const it of sec.items) {
+      const o = added[it.id];
+      if (seen.has(it.id) || (o && !listedHere(o)) || !gone(it.id)) continue;
+      seen.add(it.id);
+      out.push({ id: it.id, name: o ? o.name : it.name, detail: o?.note || it.detail || it.why || '',
+        when: o?.del ? (o.t || 0) : at });
+    }
+  }
+  for (const id of Object.keys(added)) {
+    const a = added[id];
+    if (!a || seen.has(id) || !listedHere(a) || !gone(id)) continue;
+    seen.add(id);
+    out.push({ id, name: a.name, detail: a.note || '', when: a.del ? (a.t || 0) : at });
+  }
+  // Newest first, as agreed 2026-09-29: nothing can truly be deleted, so this
+  // only grows, and the old one-offs should sink rather than bury what went
+  // last week. `sort` is stable, so equal times keep catalogue order.
+  return out.sort((x, y) => y.when - x.when);
 }
 
 /**
@@ -679,15 +815,49 @@ export function itemHTML(item, state, opts = {}) {
     + `</div>${noteRow}</div>`;
 }
 
+/**
+ * A row in "Taken off this list". Deliberately NOT `itemHTML`: no stepper, no
+ * price, no plan toggle - it is not on the list, so none of those mean anything
+ * yet, and a control that does nothing is worse than no control (§1). One
+ * button, one word on it. `.planbtn` so it is drawn exactly like the plan
+ * toggle it sits among, in every skin, with nothing new for `v33_probe` to
+ * measure.
+ */
+function goneHTML(item) {
+  const { text: raw, frozen } = splitFrozen(item.name);
+  // What `putBack` will name it, so the row and the result agree.
+  const text = raw.trim() ? raw : 'Unnamed item';
+  const det = item.detail ? `<div class="det">${esc(item.detail)}</div>` : '';
+  return `<div class="item gone" data-id="${esc(item.id)}">`
+    + `<div class="nm"><span class="nmt">${esc(text)}</span>${frozen ? '<span class="frozen">FROZEN</span>' : ''}</div>`
+    + det
+    + `<button class="planbtn putback" data-putback="${esc(item.id)}">&#8635; Put back</button></div>`;
+}
+
+/**
+ * THE SEARCH, applied to a planning screen. `score` of 0 is a miss.
+ *
+ * The order of the list itself is NOT changed by a search - sections stay in
+ * aisle order, which is the order people know. Only "Taken off" is re-ranked,
+ * best match first, because that one can run to a whole emptied catalogue and
+ * its own order (newest first) says nothing about what was typed.
+ */
+function scoreOf(match, it) {
+  return match ? match(it.name, [it.detail, it.why].filter(Boolean).join(' ')) : 1;
+}
+
 export function listHTML(state, opts = {}) {
   const planning = !!opts.planning;
   const storeId = state.ui.store;
   const groups = buildGroups(state, storeId);
+  // Search only exists while choosing. In the aisle the list is the trip, and a
+  // box that could hide half of it is a way to walk past something.
+  const match = planning ? matcher(opts.query || '') : null;
   let html = '';
   let shown = 0;
 
   for (const g of groups) {
-    const onList = g.items.filter((i) => onTrip(state, i, planning));
+    const onList = g.items.filter((i) => onTrip(state, i, planning) && scoreOf(match, i) > 0);
     const visible = planning
       ? onList
       : onList.filter((i) => !(state.ui.hideDone && state.items[i.id]?.s));
@@ -700,30 +870,93 @@ export function listHTML(state, opts = {}) {
     for (const i of visible) { html += itemHTML(i, state, { planning, storeId }); shown++; }
   }
 
-  if (!shown) {
-    if (planning) {
-      html = `<div class="empty">Nothing to plan for this store.</div>`;
-    } else {
-      const c = counts(state, storeId);
-      // AN EMPTIED LIST SAYS SO, and says how to undo it. This is the screen
-      // all four phones render, so it is the only thing the OTHER three ever
-      // see: without it a sweep arriving over the wire takes 58 rows away with
-      // no toast, no banner and no explanation, and the generic message below
-      // points at the wrong remedy - "Tap + to add something" reads as "type it
-      // all in again" to the person who did not tap Empty. §1, the list is
-      // never silently smaller, read from the receiving end.
-      html = c.total === 0 && sweptAt(state)
-        ? `<div class="empty">This list was emptied for everyone.<br><br>Tap <b>Menu</b> then <b>Put back items that were taken off</b> to bring it all back.</div>`
-        : c.total === 0
-        ? (anyPlanned(state)
-          ? `<div class="empty">Nothing from this store is on this trip.<br><br>Tap <b>Plan</b> to add things, or <b>+</b> for a one-off.</div>`
-          : (useCatalogue
-            ? `<div class="empty">Nothing on the list for this store.<br>Tap <b>+</b> to add something.</div>`
-            : `<div class="empty">This list is empty.<br><br>Tap <b>+</b> to add one thing, or <b>Menu</b> then <b>Paste a list</b> to add several at once.</div>`))
-        : `<div class="empty">&#9989; Everything here is handled.<br><br>Tap <b>Show done</b> to see it again.</div>`;
+  if (planning) {
+    let gone = takenOff(state, storeId);
+    if (match) {
+      gone = gone.map((it) => ({ it, s: scoreOf(match, it) })).filter((x) => x.s > 0)
+        .sort((a, b) => b.s - a.s).map((x) => x.it);
     }
+    if (gone.length) {
+      // SAID, when nothing is left on the tab: after an Empty this is the
+      // whole screen, and a section heading alone does not tell somebody who
+      // did not tap Empty why the list they know has gone.
+      if (!shown && !match) {
+        html += `<div class="empty slim">Nothing from this store is on the list right now.<br>Put back what you need from below.</div>`;
+      }
+      // "ONTO THIS TRIP" ONLY WHEN IT IS TRUE. `putBackOne` plans the row only
+      // when a trip is planned; with none, the row comes back wearing an "Add
+      // to trip" button, and a hint promising otherwise was the v39 ethos
+      // review's second finding.
+      html += `<div class="sec gonesec"><b>Taken off this list</b><span>${gone.length}</span></div>`
+        + `<div class="gonehint">Put back returns it to everyone&rsquo;s phone${anyPlanned(state) ? ', and onto this trip' : ''}.</div>`;
+      for (const it of gone) html += goneHTML(it);
+      return html;
+    }
+    if (!shown) {
+      html = match
+        ? `<div class="empty">Nothing here matches &ldquo;${esc(opts.query.trim())}&rdquo;.${elsewhereHint(state, storeId, match)}</div>`
+        : `<div class="empty">Nothing to plan for this store.</div>`;
+    }
+    return html;
+  }
+
+  // A PARTLY EMPTIED LIST SAYS SO TOO. v38's undo was all or nothing, so an
+  // emptied list stayed visibly empty until somebody brought it all back; v39
+  // makes "emptied, then a few things put back" the ordinary state, and the
+  // other three phones would see a three-row list with no reason given (§1,
+  // read from the receiving end - the v39 ethos review's third finding). At
+  // the BOTTOM: it will be on screen for weeks, and above the list it would
+  // push the rows people are shopping from down every single trip. Only for
+  // an Empty - a row somebody took off by hand is not a surprise to explain.
+  if (shown && sweptAt(state) && takenOff(state, storeId).length) {
+    html += `<div class="empty slim">Some things were taken off this list for everyone.<br>To see them, tap <b>Choose what to buy</b>.</div>`;
+  }
+
+  if (!shown) {
+    const c = counts(state, storeId);
+    // AN EMPTIED LIST SAYS SO, and says how to undo it. This is the screen
+    // all four phones render, so it is the only thing the OTHER three ever
+    // see: without it a sweep arriving over the wire takes 58 rows away with
+    // no toast, no banner and no explanation, and the generic message below
+    // points at the wrong remedy - "Tap + to add something" reads as "type it
+    // all in again" to the person who did not tap Empty. §1, the list is
+    // never silently smaller, read from the receiving end.
+    // BOTH WAYS BACK, one-at-a-time first: after an Empty the usual want is
+    // a handful of things for this trip, not all 85 again.
+    html = c.total === 0 && sweptAt(state)
+      ? `<div class="empty">This list was emptied for everyone.<br><br>To bring back just some things, tap <b>Choose what to buy</b>.<br><br>To bring it all back, tap <b>Menu</b> then <b>Put back items that were taken off</b>.</div>`
+      : c.total === 0
+      ? (anyPlanned(state)
+        // "Choose what to buy", the words on the button - this said "Plan",
+        // which is on no button anywhere in the app.
+        ? `<div class="empty">Nothing from this store is on this trip.<br><br>Tap <b>Choose what to buy</b> to add things, or <b>+</b> for a one-off.</div>`
+        : (useCatalogue
+          ? `<div class="empty">Nothing on the list for this store.<br>Tap <b>+</b> to add something.</div>`
+          : `<div class="empty">This list is empty.<br><br>Tap <b>+</b> to add one thing, or <b>Menu</b> then <b>Paste a list</b> to add several at once.</div>`))
+      : `<div class="empty">&#9989; Everything here is handled.<br><br>Tap <b>Show done</b> to see it again.</div>`;
   }
   return html;
+}
+
+/**
+ * NEVER A DEAD END (§3). A search that finds nothing on this tab may be
+ * finding it on another one - an item filed at Costco is invisible from the
+ * Sam's tab - so say where, by the tab's own name, and how many.
+ */
+function elsewhereHint(state, storeId, match) {
+  const where = [];
+  for (const s of shopsFor(state)) {
+    if (s.id === storeId) continue;
+    const ids = new Set();
+    for (const g of buildGroups(state, s.id)) for (const i of g.items) if (scoreOf(match, i) > 0) ids.add(i.id);
+    for (const i of takenOff(state, s.id)) if (scoreOf(match, i) > 0) ids.add(i.id);
+    if (ids.size) where.push(`${esc(s.short)} (${ids.size})`);
+  }
+  // `.elsewhere` is read by main.js: the header hides the tabs while the
+  // keyboard is up, and this sentence tells the reader to tap one.
+  return where.length
+    ? `<br><br><span class="elsewhere">Found on ${where.join(', ')} &mdash; tap that store&rsquo;s tab above.</span>`
+    : '<br><br>Try fewer letters, or tap <b>Clear</b>.';
 }
 
 /* ---------- trip report ---------- */

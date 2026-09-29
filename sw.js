@@ -11,7 +11,7 @@
 // bump a device can run yesterday's modules against today's data shape — a
 // combination that was never tested. `activate` deletes every other version, so
 // the shell upgrades as one unit rather than file by file.
-const VERSION = 'v38';
+const VERSION = 'v39';
 const CACHE = `plate-and-parcel-${VERSION}`;
 
 const SHELL = [
@@ -25,6 +25,7 @@ const SHELL = [
   './app/view.js',
   './app/crypto.js',
   './app/data.js',
+  './app/find.js',
   './icon.png',
   './icon-maskable.png',
   './apple-touch-icon.png',

@@ -886,6 +886,38 @@ body.planning .item{opacity:1;}
 .item.plan.picked .tickbox{background:var(--plan); border-color:var(--plan);}
 .planbtn{width:100%; margin-top:9px; padding:11px; font-size:.82rem; font-weight:600; color:var(--muted);}
 .item.plan.picked .planbtn{--fill:var(--plan); color:var(--on-plan);}
+/* v39 - search while choosing, and what was taken off. The box sits on the
+   same row as its Clear button so the sticky header grows by one line, not
+   two, at the Largest text size on a 320px phone. */
+.findbar{display:flex; gap:8px; margin-top:8px; align-items:stretch;}
+.findbar[hidden]{display:none;}
+.findbar input{flex:1; min-width:0; margin:0;}
+/* The placeholder is the box's only visible label, and the browser default is
+   a pale grey iOS draws at about 30% - the faded text the design centre
+   cannot read. The house muted ink instead, at full strength. */
+.findbar input::placeholder{color:var(--muted); opacity:1;}
+/* WebKit and Chrome draw their own unlabelled x in a search box once it has
+   text: a second control for the job Clear does, and an icon alone. */
+.findbar input::-webkit-search-cancel-button{-webkit-appearance:none; display:none;}
+/* MEASURED, v39, Largest text on 320x568: the sticky header was 334px while
+   choosing, and a phone keyboard leaves ~304 - no results visible while
+   typing. The progress bar and count describe the TRIP, which choosing is not
+   (the estimate line already hides while choosing, for the same reason). */
+body.planning .pbar,
+body.planning .pmeta{display:none;}
+/* And while the keyboard is up (`finding`, set on the box's focus in main.js):
+   only the search and the way out. The banner, list name and tabs return
+   when the keyboard goes. */
+body.planning.finding header .hrow,
+body.planning.finding #listName,
+body.planning.finding:not(.showtabs) #tabs{display:none;}
+.findbar button{flex:0 0 auto; padding:0 14px; font-size:.85rem; font-weight:600;}
+/* A taken-off row is NOT dimmed. Faded text is the exact thing the design
+   centre cannot read (LEDGER M35: a fade is not measured by any ratio), and
+   the heading already says these are not on the list. */
+.item.gone{border-left-color:var(--line);}
+.gonehint{font-size:.8rem; color:var(--muted); margin:-2px 0 8px; line-height:1.5;}
+.empty.slim{padding:18px 14px 6px;}
 .item.flagged{border-left-color:var(--skip);}
 .flagline{margin-top:8px; font-size:.76rem; color:var(--warn-ink); background:var(--warn-bg);
   border:1px solid var(--warn-line); border-radius:9px; padding:8px 10px; cursor:pointer; line-height:1.45;}
@@ -1153,6 +1185,17 @@ html[data-skin="lux"][data-theme="light"]{
   </div>
   <div class="listname" id="listName"></div>
   <button class="planbar" id="planBtn">✎ Choose what to buy</button>
+  <!-- Only while choosing (v39). In the header, so it stays in reach on a long
+       list, and outside #list, which is rebuilt on every paint and would take
+       the keyboard away mid-word. The button carries a word, not an x: an icon
+       alone is a guess. -->
+  <div class="findbar" id="findBar" hidden>
+    <!-- "Find an item", not the review's "Type to find an item": measured at
+         Largest on 320px, the longer one is cut off mid-word ("…an iten"). -->
+    <input type="search" id="planFind" placeholder="Find an item" aria-label="Find an item"
+      autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+    <button class="pxl" id="planFindClear" type="button">Clear</button>
+  </div>
   <div class="tabs" id="tabs"></div>
   <div class="pbar"><div id="pfill"></div></div>
   <div class="pmeta"><span id="pleft"></span><span id="pright"></span></div>
@@ -1433,7 +1476,7 @@ html[data-skin="lux"][data-theme="light"]{
        hint says who else sees it (§3: say when something affects other people). -->
   <div class="fld"><label>Items someone removed</label>
     <button class="wide" id="menuRestore">&#8635; Put back items that were taken off</button>
-    <div class="hint">Undoes &ldquo;Empty this list for everyone&rdquo;, and brings back anything taken off with &ldquo;Take off this list&rdquo;. Everyone&rsquo;s phone gets it back.</div></div>
+    <div class="hint">Undoes &ldquo;Empty this list for everyone&rdquo;, and brings back anything taken off with &ldquo;Take off this list&rdquo;. Everyone&rsquo;s phone gets it back. To bring back only some things, tap &ldquo;Choose what to buy&rdquo; instead. Things someone typed in and then removed come back only that way, one at a time.</div></div>
   <div class="fld"><label>This trip</label>
     <button class="wide" id="menuClearPlan">&#8617; Show the whole list again</button>
     <div class="hint">Undoes &ldquo;Choose what to buy&rdquo;, so every item is back on show. Nothing is deleted either way.</div></div>

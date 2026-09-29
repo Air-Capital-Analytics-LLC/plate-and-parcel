@@ -750,11 +750,16 @@ export function createStore({ ns = 'household' } = {}) {
    * it. Renames are left alone: this restores what is SHOWN, not what things
    * are called.
    *
-   * ONLY `cat` ROWS, still, and deliberately. A hand-typed item removed one at
-   * a time is permanent because that is exactly what its confirm says: "It goes
-   * for everybody, on every phone." Emptying the list is a different operation
-   * and does NOT come through here - see `emptyList`, which hides rows without
-   * writing a record against any of them, and `unemptyList`, which undoes it.
+   * ONLY `cat` ROWS, still, and deliberately - but no longer because a removed
+   * hand-typed item is gone for good. Since v39 it comes back one at a time from
+   * "Taken off this list" in "Choose what to buy" (`putBack`). It is left out of
+   * THIS button because nothing can truly be deleted here, so every typo and
+   * one-off ever removed is still in the records, and "bring them all back"
+   * would pour months of them onto the list at once. The menu says so when
+   * this finds nothing but typed items are waiting. Emptying the list is a
+   * different operation and does NOT come through here - see `emptyList`,
+   * which hides rows without writing a record against any of them, and
+   * `unemptyList`, which undoes it.
    */
   function restoreHidden() {
     let n = 0;
@@ -773,6 +778,81 @@ export function createStore({ ns = 'household' } = {}) {
     let n = 0;
     for (const r of Object.values(state.added)) if (r && r.cat && r.del) n++;
     return n;
+  }
+
+  /**
+   * Put back ONE item, whichever way it went: taken off, removed, or emptied
+   * away with the rest of the list.
+   *
+   * IT IS AN EDIT, and that is the whole mechanism. A row hidden by an Empty
+   * is one whose own last word is older than the sweep (`sweptOut` in
+   * view.js), so writing a fresh record against it makes it newer and it shows
+   * again - on its own, with the rest of the list still emptied, and with no
+   * second marker, no new KIND and no rules change. A row taken off carries
+   * `del:true`, and `upsertAdded` writes `del:false`. Both are the same write.
+   *
+   * `fresh` comes from `view.freshRecordFor`, for catalogue rows only. Its
+   * SHOPS are used only when the row has no record yet - the common case after
+   * an Empty, which writes nothing against rows - and are built by
+   * `firstRecordShops`, whose comment carries the M41 receipt. Its NAME is
+   * used only when an existing record's own name is blank.
+   *
+   * AN EXISTING RECORD KEEPS ITS SHOPS, including one this list has since
+   * switched off - and that shop's tab then comes back, by `shopsFor`'s orphan
+   * rule. Decided 2026-09-29 against narrowing the record instead: the record
+   * is the truth about where the item is filed, "Put back items that were
+   * taken off" has always restored it exactly this way, and quietly dropping a
+   * shop from it is the "list is never silently smaller" failure (§1). The
+   * toast names the tab when it lands somewhere else.
+   *
+   * `fallbackStore` is for a record naming no real shop at all - not writable
+   * by this app, but the node is world-writable (§4). Restamped as it is, it
+   * would show on no tab and no longer be offered anywhere: put back into
+   * nothing, behind a success toast (v39 correctness review). It goes to the
+   * tab it was offered under instead.
+   *
+   * Returns 'back', 'stuck' or 'failed', and writes NOTHING unless 'back'.
+   * 'stuck' is a sweep stamped further ahead than `observeClock` lets this
+   * clock go - a phone over a day fast, or a hostile record - so no honest
+   * stamp can outrank it. The first cut wrote anyway and then reported
+   * failure, so a put back that "failed" still synced to all four phones.
+   * Checked HERE because only the store can see `clock`. `unemptyList` is the
+   * remedy, and deliberately not a per-row copy of its trick: stamping an item
+   * above a far-future sweep would make every honest later edit of it lose.
+   */
+  function putBack(id, fresh, fallbackStore) {
+    const cur = state.added[id];
+    if (!cur && !fresh?.store) return 'failed';
+    // What `tick()` will stamp, at the least. A row is hidden while the sweep
+    // is NEWER than it (`at > t`), so a tie is enough.
+    const at = sweptAt();
+    if (at && at > Math.max(Date.now(), clock + 1)) return 'stuck';
+    let patch = fresh;
+    if (cur) {
+      patch = {};
+      // `upsertAdded` refuses a blank name. The catalogue's is the honest one;
+      // for a typed record there is none, and refusing would leave a row in
+      // "Taken off" whose button never works (§1, v39 verifier). A plain
+      // stand-in brings it back where it can be renamed or removed.
+      if (!String(cur.name ?? '').trim()) patch.name = fresh?.name || 'Unnamed item';
+      const real = [cur.store, ...(Array.isArray(cur.also) ? cur.also : [])].some((s) => SHOP_IDS.includes(s));
+      if (!real) {
+        if (!SHOP_IDS.includes(fallbackStore)) return 'failed';
+        patch.store = fallbackStore;
+        patch.also = [];
+      }
+    }
+    if (!upsertAdded(id, patch)) return 'failed';
+    // A TAKE-OFF FROM A PHONE OVER A DAY FAST is stamped where no honest
+    // `tick()` can reach (`observeClock` refuses to follow it), so the write
+    // above would show locally and lose on every phone that already holds the
+    // fast record - a "Put back" toast over a revert (v39 verifier, run). One
+    // tick past it, on THIS record only: it is already out of honest reach,
+    // so this makes nothing worse, and the shared clock is not touched -
+    // `unemptyList`'s argument, applied to the one record in the way.
+    const mine = state.added[id];
+    if (cur && typeof cur.t === 'number' && mine.t <= cur.t) mine.t = cur.t + 1;
+    return 'back';
   }
 
   /* ---- empty the list for everyone: the shared half of "delete a list" ---- */
@@ -872,12 +952,21 @@ export function createStore({ ns = 'household' } = {}) {
    * For a catalogue row there may be no record yet - hiding it is the first
    * thing this list has ever said about that row - so one is written. The
    * catalogue itself is never touched.
+   *
+   * THAT FIRST RECORD CARRIES EVERY SHOP THE ROW WAS ON (LEDGER M41). It took
+   * `store` alone, so a Sam's-and-Costco row taken off was recorded as a
+   * Sam's row - invisible while hidden, and then "Put back items that were
+   * taken off" returned it to Sam's only. Measured: costco 58 -> 57, on every
+   * phone, behind a toast saying it was put back. A record is the truth about
+   * its shops once it exists; this one was written from whichever tab the
+   * edit sheet happened to seed from.
    */
   function removeAdded(id, opts = {}) {
     const cur = state.added[id];
     if (!cur && !opts.cat) return;
+    const store = String(opts.store || 'sams');
     state.added[id] = stamp({
-      ...(cur || { name: String(opts.name || ''), note: '', store: String(opts.store || 'sams'), by: state.me.name }),
+      ...(cur || { name: String(opts.name || ''), note: '', store, ...alsoField(opts.also, store), by: state.me.name }),
       del: true,
       ...(opts.cat || cur?.cat ? { cat: 1 } : {}),
     });
@@ -1513,7 +1602,7 @@ export function createStore({ ns = 'household' } = {}) {
 
   return {
     state, subscribe, emit,
-    setStatus, addItem, editAdded, upsertAdded, removeAdded, restoreHidden, hiddenCount,
+    setStatus, addItem, editAdded, upsertAdded, removeAdded, restoreHidden, hiddenCount, putBack,
     emptyList, unemptyList, sweptAt, clearAllMarks, setUI, setName,
     hasPlan, isPlanned, setPlanned, clearPlan, replanFromLastTrip,
     getQty, setQty, bumpQty,

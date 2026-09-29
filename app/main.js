@@ -294,6 +294,7 @@ function repaint() {
     const retry = $('lockRetry');
     if (retry) retry.onclick = () => location.reload();
     $('planBtn').hidden = true;
+    $('findBar').hidden = true;
     // The Trip summary is built from the catalogue. Leaving it reachable while
     // locked made the lock decorative.
     $('btnTrip').hidden = true;
@@ -338,9 +339,21 @@ function repaint() {
   });
   $('pest').textContent = estLine;
   $('pest').hidden = !estLine;
-  listEl.innerHTML = View.listHTML(s, { planning });
+  // The box lives in the header, OUTSIDE `listEl`, on purpose: the list is
+  // rebuilt with innerHTML on every paint, and every record arriving from
+  // another phone is a paint - a box inside it would lose the keyboard mid-word.
+  $('findBar').hidden = !planning;
+  listEl.innerHTML = View.listHTML(s, { planning, query: planning ? planQuery : '' });
   document.body.classList.toggle('planning', planning);
-  $('planBtn').textContent = planning ? '✓ Done — back to shopping' : '✎ Choose what to buy';
+  // THE TABS STAY when the only thing on screen says "tap that store's tab
+  // above". `finding` hides them to make room for results, and here there are
+  // none - so the room is free, and hiding them made the advice impossible to
+  // follow (v39 verifier).
+  document.body.classList.toggle('showtabs', !!listEl.querySelector('.elsewhere'));
+  // ONE LINE at Largest on a 320px phone. "✓ Done — back to shopping" wrapped
+  // to two there, 26px of a sticky header that measured 334px of 564 with
+  // the search box added (v39) - taller than what a phone keyboard leaves.
+  $('planBtn').textContent = planning ? '✓ Done choosing' : '✎ Choose what to buy';
   $('planBtn').classList.toggle('on', planning);
 }
 
@@ -732,13 +745,85 @@ async function deleteEdited() {
     // no parent knows what that is. And "only you typed this one in" was simply
     // false: any of the four can edit any added row, so it misattributed the
     // item and read as a small rebuke besides (\u00a73: never blame the user).
-    ? `Take \u201c${row.name}\u201d off this list?\n\nIt stays on your other lists, and on the master list this one was built from. \u201cPut back items that were taken off\u201d in the menu brings it back.`
-    : `Remove \u201c${row.name}\u201d from the list?\n\nIt goes for everybody, on every phone, and the menu will NOT bring this one back. Somebody would have to type it in again.`;
+    // FOR EVERYONE, in the question itself: \u00a71 puts a shared action's blast
+    // radius in the confirm text, and before v39 only the sheet's hint said it.
+    // "AT THE BOTTOM": the section is drawn after every row of the tab, up to
+    // 58 rows down, and a confirm that sends somebody to look for it should
+    // say where to look.
+    ? `Take \u201c${View.plainName(row.name)}\u201d off this list, for everyone?\n\nIt goes from everyone\u2019s phone, but stays on your other lists and on the master list. To bring it back, tap \u201cChoose what to buy\u201d and look at the bottom, under \u201cTaken off this list\u201d.`
+    // RECOVERABLE NOW (v39), so the old "the menu will NOT bring this one
+    // back" had to go - a confirm that overstates the loss is still a confirm
+    // that lies, and it frightens exactly the people \u00a71 is written for. Still
+    // `danger`: it reaches every phone, and that is what the colour means.
+    : `Remove \u201c${View.plainName(row.name)}\u201d from the list?\n\nIt goes for everybody, on every phone. To bring it back later, tap \u201cChoose what to buy\u201d and look at the bottom, under \u201cTaken off this list\u201d.`;
   if (!await ask(msg, { yes: editCat ? 'Take it off' : 'Remove it', danger: !editCat })) return;
-  store.removeAdded(editId, { cat: editCat, name: row.name, store: editStore });
+  // FROM THE CATALOGUE, NOT THE SHEET (LEDGER M41). Only a catalogue row's
+  // FIRST record is shaped here - with a record, `removeAdded` keeps it - and
+  // that record must carry every shop the row is on. The sheet's picker was
+  // the first cut's source, and the person can have unticked Costco before
+  // changing their mind and tapping this: M41 again, through a side door.
+  // `firstRecordShops` is the one rule Put back uses too.
+  const first = editCat ? View.firstRecordShops(store.state, editId) : [];
+  store.removeAdded(editId, {
+    cat: editCat, name: row.name,
+    store: first[0] || editStore, also: first.slice(1),
+  });
   closeSheet('editSheet');
   toast(editCat ? 'Taken off this list' : 'Removed');
   sync?.drain();
+}
+
+/**
+ * "Put back" on one row of "Taken off this list".
+ *
+ * ONTO THIS TRIP TOO, when a trip is planned. Put back alone would restore it
+ * to the list and then `onTrip` would hide it again the moment Done was
+ * tapped, because a planned trip shows only what is planned - so the tap
+ * would appear to work and then not (§1). With no plan, everything is on the
+ * trip already, and planning this one row would START a plan and hide every
+ * other row on the list. So: only when a plan exists.
+ *
+ * DOUBLE-TAP GUARD. The row leaves the section the instant it is put back and
+ * the next one slides up under the finger, so the second half of a double-tap
+ * would put back an item nobody chose. 600 ms, the backdrop guard's figure.
+ */
+function putBackOne(id) {
+  if (blockedWhileLocked()) return;
+  const now = Date.now();
+  if (now - lastPutBackAt < 600) return;
+  lastPutBackAt = now;
+  const here = store.state.ui.store;
+  const row = View.takenOff(store.state, here).find((i) => i.id === id);
+  if (!row) { toast('That one is already back'); return; }
+  const res = store.putBack(id, View.freshRecordFor(store.state, id), here);
+  // THE SCREEN DECIDES whether it worked, not the write. Visibility has one
+  // owner, `view.js`; `putBack` only knows whether it wrote. A success toast
+  // over a row that shows nowhere was the v39 correctness review's fifth
+  // finding.
+  const shown = res === 'back' ? View.findItem(store.state, id) : null;
+  if (shown && store.hasPlan()) store.setPlanned(id, true);
+  // LAST TRIP'S TICK DOES NOT COME BACK WITH IT. An Empty clears no ticks,
+  // so "empty, then pick this trip's few things" returned rows already marked
+  // Got - and with Hide done on, invisible behind "Everything here is
+  // handled", straight after a toast saying they were put back (v39 verifier,
+  // run). Only a mark OLDER than the take-off: one set since is somebody's
+  // answer for this trip and stays.
+  const mark = store.state.items[id];
+  if (shown && mark?.s && (mark.t || 0) < row.when) store.setStatus(id, null);
+  if (res === 'back') sync?.drain();
+  const name = View.plainName(row.name);
+  if (shown) {
+    // Said when it landed on another tab - a record keeps its own shops, so
+    // it can - rather than leaving the person to think it vanished.
+    const other = shown.store !== here && !View.onShop(store.state.added[id], here);
+    const tab = other ? (View.shopsFor(store.state).find((s) => s.id === shown.store) || {}).short : '';
+    toast(tab ? `Put back: ${name} — on ${tab}` : `Put back: ${name}`);
+  } else if (res === 'stuck') {
+    // True as written: `unemptyList` undoes the sweep itself, for every row.
+    toast('Couldn’t put that back on its own. Menu → “Put back items that were taken off”');
+  } else {
+    toast(`Couldn’t put “${name}” back. Add it again with +`);
+  }
 }
 
 function saveAdd() {
@@ -1409,7 +1494,7 @@ function paintNoList() {
   // `.listname` belongs in this list, not behind a separate check: the receipt
   // above is precisely about the neutral screen's decision living in one layer
   // while another layer reached the same screen. A bare link names no list.
-  for (const sel of ['#tabs', '.pbar', '.pmeta', '.listname', '#planBtn', '#fabAdd', '#doneBtn', '#btnTrip']) {
+  for (const sel of ['#tabs', '.pbar', '.pmeta', '.listname', '#planBtn', '#findBar', '#fabAdd', '#doneBtn', '#btnTrip']) {
     const el = document.querySelector(sel);
     if (el) el.hidden = true;
   }
@@ -2020,6 +2105,8 @@ function wireEvents() {
       sync?.drain();
       return;
     }
+    const pb = e.target.closest('[data-putback]');
+    if (pb) { putBackOne(pb.dataset.putback); return; }
     const planBtn = e.target.closest('[data-plan]');
     if (planBtn) {
       const id = planBtn.dataset.plan;
@@ -2145,7 +2232,47 @@ function wireEvents() {
     });
   });
 
-  $('planBtn').onclick = () => { if (blockedWhileLocked()) return; planning = !planning; render(); scrollTo({ top: 0 }); };
+  $('planBtn').onclick = () => {
+    if (blockedWhileLocked()) return;
+    planning = !planning;
+    if (!planning) {
+      planQuery = ''; $('planFind').value = ''; $('planFind').blur();
+      document.body.classList.remove('finding');
+    }
+    render(); scrollTo({ top: 0 });
+  };
+  $('planFind').addEventListener('input', () => { planQuery = $('planFind').value; render(); });
+  // Search is the keyboard's Enter key on a phone. There is nothing to submit -
+  // the list already shows what matches - so Enter just puts the keyboard away,
+  // which is what gives the results the screen back.
+  $('planFind').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('planFind').blur(); });
+  // WHILE THE KEYBOARD IS UP, THE HEADER IS ONLY THE SEARCH AND DONE. Measured
+  // at Largest on 320x568 (v39): the full sticky header is 334px while choosing
+  // and a phone keyboard leaves about 304 - so every letter typed changed a
+  // list nobody could see, which §1 counts as a tap that does nothing.
+  //
+  // BACK ON A DELAY, not on blur itself. Tapping a result is what blurs the
+  // box, and a header growing ~190px in that same instant would slide the row
+  // out from under the finger that is still on it. 350 ms lets the tap land
+  // first. Keyed on FOCUS, not on "has text": the tabs must be showing
+  // whenever the no-match message says "tap that store's tab above".
+  $('planFind').addEventListener('focus', () => document.body.classList.add('finding'));
+  $('planFind').addEventListener('blur', () => setTimeout(() => {
+    if (document.activeElement !== $('planFind')) document.body.classList.remove('finding');
+  }, 350));
+  // Pressing Clear must not take focus off the box, or the question "was the
+  // keyboard up?" is already answered "no" by the time the click lands.
+  // `mousedown`, not `pointerdown`: preventing the mouse event is what stops the
+  // focus change in every engine, and the click still fires.
+  $('planFindClear').addEventListener('mousedown', (e) => e.preventDefault());
+  $('planFindClear').onclick = () => {
+    // THE KEYBOARD ONLY COMES BACK IF IT WAS UP. Somebody tapping Clear to see
+    // the whole list again got a keyboard over it and a header ~190px shorter
+    // (v39 verifier).
+    const typing = document.activeElement === $('planFind');
+    planQuery = ''; $('planFind').value = ''; render();
+    if (typing) $('planFind').focus();
+  };
   $('fabAdd').onclick = () => { if (!blockedWhileLocked()) openAdd(); };
   $('importText').addEventListener('input', previewImport);
   $('importGo').onclick = doImport;
@@ -2259,7 +2386,13 @@ function wireEvents() {
     if (unswept && n) toast(`The list is back, and ${n} other item${n === 1 ? '' : 's'} with it`);
     else if (unswept) toast('The list is back');
     else if (n) toast(`Put back ${n} item${n === 1 ? '' : 's'}`);
-    else toast('Nothing was taken off this list');
+    // "NOTHING WAS TAKEN OFF" IS FALSE while "Taken off this list" is showing
+    // typed items, which this button deliberately leaves alone (see
+    // `restoreHidden`). Two screens contradicting each other was the finding
+    // BOTH the v39 ethos and correctness reviews raised independently.
+    else if (View.shopsFor(store.state).some((s) => View.takenOff(store.state, s.id).length)) {
+      toast('Things that were typed in come back one at a time: tap “Choose what to buy”');
+    } else toast('Nothing was taken off this list');
   };
   $('menuEmpty').onclick = async () => {
     if (blockedWhileLocked()) return;
@@ -2288,12 +2421,14 @@ function wireEvents() {
     }
     if (!await ask(`Empty “${listLabel()}” for everyone?\n\n`
       + `This takes ${n === 1 ? 'the 1 item' : `all ${n} items`} off this list, on everyone’s phone — not just yours. Your other lists are not touched.\n\n`
-      + 'Nothing is deleted, and nothing is lost. “Put back items that were taken off” in this menu brings all of it back.',
+      + 'Nothing is deleted, and nothing is lost. “Choose what to buy” brings back just the things you pick. “Put back items that were taken off” in this menu brings all of it back.',
     { yes: 'Empty the list', danger: true })) return;
     store.emptyList();
     closeSheet('menuSheet');
     sync?.drain();
-    toast(`Emptied — Menu → “Put back items that were taken off” returns all ${n}`);
+    // The one-at-a-time way first: emptying and then picking this trip's few
+    // things is the use Aaron reported, 2026-09-29.
+    toast('Emptied — tap “Choose what to buy” to bring back what you need');
   };
   $('menuClearPlan').onclick = async () => {
     if (blockedWhileLocked()) return;
@@ -2768,6 +2903,15 @@ async function boot() {
 }
 
 let planning = false;
+/**
+ * What is typed in the "Find an item" box. This phone only, never synced and
+ * never saved: it is where one person is looking, not something the list
+ * knows. Cleared on the way out of "Choose what to buy", so coming back in
+ * never opens on a filtered list that looks like half of it went missing.
+ */
+let planQuery = '';
+/** When the last Put back landed - see the double-tap guard in `putBackOne`. */
+let lastPutBackAt = 0;
 let pendingRestamp = false;
 let bootRetryArmed = false;
 function retryBootWhenOnline() {
