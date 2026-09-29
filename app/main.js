@@ -416,7 +416,14 @@ function closeSheet(id) { $(id).classList.remove('open'); }
  * length by someone who has already turned the text up.
  */
 let asking = false;
-function ask(text, { yes = 'Yes', no = 'Cancel', danger = false } = {}) {
+/*
+ * `noValue` is for the one question with THREE answers (v40, "already on this
+ * list"): use that one / add a second one / back out. Its No button is a real
+ * choice there, so it resolves `noValue`, while the backdrop and Escape still
+ * resolve `false` - backing out must never be read as "add a duplicate". The
+ * default keeps every other caller on plain true/false.
+ */
+function ask(text, { yes = 'Yes', no = 'Cancel', danger = false, noValue = false } = {}) {
   const cut = String(text).indexOf('\n\n');
   const title = cut > 0 ? String(text).slice(0, cut) : 'Are you sure?';
   const body = cut > 0 ? String(text).slice(cut + 2) : String(text);
@@ -451,6 +458,11 @@ function ask(text, { yes = 'Yes', no = 'Cancel', danger = false } = {}) {
   yesBtn.classList.toggle('primary', !danger);
   noBtn.classList.toggle('primary', !!danger);
 
+  // The keyboard goes first. Enter in the Add sheet's name box opens a
+  // question (v40), and on a phone the question's bottom sheet then sat
+  // UNDER the still-open keyboard, while further typing went on into the box
+  // behind it (v40 correctness review).
+  document.activeElement?.blur?.();
   openSheet('askSheet');
   return new Promise((resolve) => {
     let done = false;
@@ -465,8 +477,14 @@ function ask(text, { yes = 'Yes', no = 'Cancel', danger = false } = {}) {
       closeSheet('askSheet');
       resolve(v);
     };
-    const onYes = () => finish(true);
-    const onNo = () => finish(false);
+    // ANSWERED ONLY ONCE IT CAN HAVE BEEN READ. The question opens the instant
+    // Add is tapped, and its Yes sits where Add was - so the second half of a
+    // double-tap answered it unseen (v40 verifier). 400 ms, the same figure
+    // as the page-wide quiet time.
+    const openedAt = Date.now();
+    const settled = () => Date.now() - openedAt >= 400;
+    const onYes = () => { if (settled()) finish(true); };
+    const onNo = () => { if (settled()) finish(noValue); };
     const onBg = (e) => { if (e.target === bg) finish(false); };
     const onKey = (e) => { if (e.key === 'Escape') finish(false); };
     yesBtn.addEventListener('click', onYes);
@@ -573,6 +591,8 @@ function openAdd() {
   $('addPrice').disabled = false;
   $('addName').value = '';
   $('addNote').value = '';
+  $('addMatches').innerHTML = '';
+  $('addMatches').hidden = true;
   $('addStore').innerHTML = View.shopsFor(store.state)
     .map((s) => `<button data-addstore="${s.id}" class="${addShops.has(s.id) ? 'on' : ''}">${View.esc(s.short)}</button>`)
     .join('');
@@ -774,6 +794,33 @@ async function deleteEdited() {
 }
 
 /**
+ * Put one taken-off row back, with everything that has to come with it. The
+ * shared core of "Put back" and the Add sheet's "Use this one" (v40), so the
+ * two cannot drift - the second was going to need every line of the first.
+ * `row` is the item as `View.takenOff` lists it; its `when` is the take-off.
+ * Returns `putBack`'s answer and the row as shown, or null if it is not.
+ */
+function bringBack(id, row, here) {
+  const res = store.putBack(id, View.freshRecordFor(store.state, id), here);
+  // THE SCREEN DECIDES whether it worked, not the write. Visibility has one
+  // owner, `view.js`; `putBack` only knows whether it wrote. A success toast
+  // over a row that shows nowhere was the v39 correctness review's fifth
+  // finding.
+  const shown = res === 'back' ? View.findItem(store.state, id) : null;
+  if (shown && store.hasPlan()) store.setPlanned(id, true);
+  // LAST TRIP'S TICK DOES NOT COME BACK WITH IT. An Empty clears no ticks,
+  // so "empty, then pick this trip's few things" returned rows already marked
+  // Got - and with Hide done on, invisible behind "Everything here is
+  // handled", straight after a toast saying they were put back (v39 verifier,
+  // run). Only a mark OLDER than the take-off: one set since is somebody's
+  // answer for this trip and stays.
+  const mark = store.state.items[id];
+  if (shown && mark?.s && (mark.t || 0) < row.when) store.setStatus(id, null);
+  if (res === 'back') sync?.drain();
+  return { res, shown };
+}
+
+/**
  * "Put back" on one row of "Taken off this list".
  *
  * ONTO THIS TRIP TOO, when a trip is planned. Put back alone would restore it
@@ -795,22 +842,7 @@ function putBackOne(id) {
   const here = store.state.ui.store;
   const row = View.takenOff(store.state, here).find((i) => i.id === id);
   if (!row) { toast('That one is already back'); return; }
-  const res = store.putBack(id, View.freshRecordFor(store.state, id), here);
-  // THE SCREEN DECIDES whether it worked, not the write. Visibility has one
-  // owner, `view.js`; `putBack` only knows whether it wrote. A success toast
-  // over a row that shows nowhere was the v39 correctness review's fifth
-  // finding.
-  const shown = res === 'back' ? View.findItem(store.state, id) : null;
-  if (shown && store.hasPlan()) store.setPlanned(id, true);
-  // LAST TRIP'S TICK DOES NOT COME BACK WITH IT. An Empty clears no ticks,
-  // so "empty, then pick this trip's few things" returned rows already marked
-  // Got - and with Hide done on, invisible behind "Everything here is
-  // handled", straight after a toast saying they were put back (v39 verifier,
-  // run). Only a mark OLDER than the take-off: one set since is somebody's
-  // answer for this trip and stays.
-  const mark = store.state.items[id];
-  if (shown && mark?.s && (mark.t || 0) < row.when) store.setStatus(id, null);
-  if (res === 'back') sync?.drain();
+  const { res, shown } = bringBack(id, row, here);
   const name = View.plainName(row.name);
   if (shown) {
     // Said when it landed on another tab - a record keeps its own shops, so
@@ -826,7 +858,146 @@ function putBackOne(id) {
   }
 }
 
-function saveAdd() {
+/**
+ * The Add sheet's matches, repainted as the name is typed (v40). Inside the
+ * sheet, not `#list`, so no paint of the list can take the keyboard away.
+ */
+function paintMatches() {
+  clearTimeout(matchTimer);
+  const box = $('addMatches');
+  // Two at Largest: each match is a full-width button, and three of them at
+  // 21px root pushed the store buttons a screen away (measured, v40).
+  const max = document.documentElement.classList.contains('t2') ? 2 : 3;
+  const html = View.matchesHTML(store.state, View.existingMatches(store.state, $('addName').value),
+    { chosen: addShops, max });
+  box.innerHTML = html;
+  box.hidden = !html;
+}
+
+/**
+ * Typing repaints once per short pause, not once per key. On an older phone a
+ * list with a few hundred typed items measured 100-250ms a keystroke (v40
+ * review). A timer, not requestAnimationFrame - §4: a latch must never be
+ * owned by a callback the platform may decline to run.
+ */
+let matchTimer = 0;
+function queueMatches() {
+  clearTimeout(matchTimer);
+  matchTimer = setTimeout(paintMatches, 60);
+}
+
+/**
+ * Taps on the list are ignored this long after a sheet closes under the finger
+ * (v40): the second half of a double-tap on "Use this one" or Add otherwise
+ * lands mid-list, on whatever row's Got button is there. The sheets' own
+ * guards stop a second USE; this stops a stray tick.
+ */
+let listQuietUntil = 0;
+function closeAddSheet() {
+  closeSheet('addSheet');
+  listQuietUntil = Date.now() + 400;
+}
+
+/** How many and price from the Add sheet, onto an item - new or existing. One
+ *  copy, so "Use this one" and Add cannot disagree about what the fields mean.
+ *  Written only when not the default, the paste path's rule: a quiet add still
+ *  costs one record. `cents` is already validated by the caller. */
+function applySheetQtyPrice(id, cents) {
+  if (addQty > 1) store.setQty(id, addQty);
+  if (addByWeight) store.setPrice(id, 0, true);
+  else if (cents !== null) store.setPrice(id, cents, false);
+}
+
+/**
+ * "Use this one" in the Add sheet: the item already on this list goes onto
+ * every store ticked in the sheet, instead of a second copy being made (v40).
+ *
+ * ONE ITEM, ONE TICK - the v32 rule again. A second copy is a second id, and
+ * two ids tick separately: bought at Sam's, still unticked at Costco.
+ *
+ * WHAT THE SHEET SAYS IS WHAT HAPPENS, as far as it can without taking
+ * anything away:
+ *   - stores: ADDED to the ones it has, never replacing them (`ensureOnShops`);
+ *   - taken off: it comes back, through the same `bringBack` as Put back, so
+ *     last trip's tick is cleared and a planned trip gets it too;
+ *   - how many / price: applied, the same as Add would have - and a bad price
+ *     is refused BEFORE anything is written, as in `saveAdd`;
+ *   - the note: added after the item's own, never over it. On a catalogue row
+ *     it is NOT applied, and the toast says so: a catalogue row's "note" is
+ *     the per-store pack text ("Member's Mark ... 5.6 lb" at Sam's, "Kirkland
+ *     ... 8 lb" at Costco), and a note written over it replaced both with one
+ *     line (v40 correctness review, measured). The Edit sheet is where that
+ *     text can be changed with it in view.
+ *   - a row still ticked this trip keeps its tick - somebody may have bought
+ *     it - and the toast SAYS it is ticked, rather than handing back a row
+ *     that Hide done is keeping out of sight (v40 reviews, both).
+ * Shares Put back's double-tap guard: the sheet closes under the finger, and
+ * the second half of a double-tap must not land on whatever is beneath.
+ */
+function useExisting(id) {
+  if (blockedWhileLocked()) return;
+  const now = Date.now();
+  if (now - lastPutBackAt < 600) return;
+  lastPutBackAt = now;
+  const cents = addByWeight ? null : parsePrice($('addPrice').value);
+  if (cents === undefined) { toast('Write the price like 3.99, up to 1000'); return; }
+  const here = store.state.ui.store;
+  const gone = View.shopsFor(store.state)
+    .map((s) => View.takenOff(store.state, s.id).find((i) => i.id === id)).find(Boolean);
+  if (gone) {
+    const { res, shown } = bringBack(id, gone, here);
+    if (!shown) {
+      // Not "tap Add": with this exact name that leads straight back to the
+      // same question and the same failure (v40 ethos review).
+      toast(res === 'stuck'
+        ? 'Couldn’t put that back on its own. Menu → “Put back items that were taken off”'
+        : 'Couldn’t bring that one back. Tap Add, then “Add a second one”.');
+      return;
+    }
+  } else if (!View.findItem(store.state, id)) {
+    // Neither on the list nor taken off: it went some other way while the
+    // sheet was open. The matches are repainted at once, so no "type it again".
+    toast('That one isn’t on this list any more. Tap Add to add it.');
+    paintMatches();
+    return;
+  }
+  // Every edit below goes through `upsertAdded`, which always outranks the
+  // record it edits - so this second write cannot undo `bringBack`'s (v40).
+  store.ensureOnShops(id, [...addShops], View.freshRecordFor(store.state, id));
+  applySheetQtyPrice(id, cents);
+  const typed = $('addNote').value.trim();
+  const rec = store.state.added[id];
+  const own = String(rec?.note || '').trim();
+  let noteLeft = '';
+  const joined = own ? `${own} · ${typed}` : typed;
+  if (typed && View.isCatalogueId(id) && !own) {
+    noteLeft = 'Your note was not added — tap ✎ on the row to change its note.';
+  } else if (typed && joined.length > 300) {
+    // NOT cut to fit: `.slice(0, 300)` stored "aaa · un" for "unscented" and
+    // said nothing (v40 verifier, run). Left alone, and said.
+    noteLeft = 'Its note is full, so yours was not added — tap ✎ on the row to change it.';
+  } else if (typed && !own.toLowerCase().includes(typed.toLowerCase())) {
+    store.upsertAdded(id, { note: joined });
+  }
+  // `bringBack` has already planned a row that came back; this is for one
+  // that was on the list all along.
+  if (store.hasPlan()) store.setPlanned(id, true);
+  closeAddSheet();
+  sync?.drain();
+  // Say every tab it is on now, by name - that is the thing this did.
+  const on = View.shopsHolding(store.state, id);
+  const shops = View.shopsFor(store.state);
+  const names = on.map((s) => (shops.find((x) => x.id === s) || {}).short).filter(Boolean);
+  if (!on.includes(store.state.ui.store) && on.length) store.setUI({ store: on[0] });
+  const name = View.plainName((View.findItem(store.state, id) || {}).name || '');
+  const st = View.statusWords(store.state.items[id]?.s);
+  toast((gone ? 'Put back: ' : '') + name
+    + (names.length ? ` — on ${View.joinAnd(names)}` : '')
+    + (st ? `, ${st}` : '')
+    + (noteLeft ? `. ${noteLeft}` : ''));
+}
+
+async function saveAdd() {
   const name = $('addName').value.trim();
   if (!name) { toast('Give it a name first'); return; }
   // A BAD price is refused; an EMPTY one is not. `parsePrice` returns null for
@@ -834,18 +1005,34 @@ function saveAdd() {
   // the Add button is never blocked by a field the person chose not to fill.
   const cents = addByWeight ? null : parsePrice($('addPrice').value);
   if (cents === undefined) { toast('Write the price like 3.99, up to 1000'); return; }
+  // ALREADY ON THIS LIST, by exactly this name (v40): asked, not refused.
+  // "Use that one" is the filled, safe answer; "Add a second one" stays open
+  // for the genuinely different thing with the same name. Backing out - the
+  // backdrop, Escape - adds nothing and leaves the sheet as it was.
+  const dupe = View.sameNameAs(store.state, name);
+  if (dupe) {
+    const shown = View.plainName(dupe.name);
+    // THE SAME WORDS AS THE MATCH BUTTON, from the same function, so one
+    // action never has two names. And no promise the fields cannot keep: the
+    // first cut said "it keeps its price", while a price typed in this sheet
+    // is applied (v40 ethos review). What IS true is the one-item rule.
+    const m = View.itemAsMatch(store.state, dupe.id) || { gone: dupe.gone, shopIds: [] };
+    const label = View.useLabel(store.state, m, addShops);
+    const a = await ask(`“${shown}” is already on this list.\n\n`
+      + (dupe.gone ? 'It was taken off. ' : '')
+      + `${label} instead? It is one thing to buy, so ticking it off anywhere ticks it off everywhere.`,
+    { yes: label, no: 'Add a second one', noValue: 'second' });
+    if (a === true) { useExisting(dupe.id); return; }
+    if (a !== 'second') return;
+  }
   const shops = [...addShops];
   addStore = shops.includes(addStore) ? addStore : shops[0];
   const newId = store.addItem({
     name, note: $('addNote').value.trim(), store: addStore,
     also: shops.filter((x) => x !== addStore),
   });
-  // Written only when they are not the default - same rule the paste path
-  // follows, so a quiet add still costs exactly one record.
-  if (newId && addQty > 1) store.setQty(newId, addQty);
-  if (newId && addByWeight) store.setPrice(newId, 0, true);
-  else if (newId && cents !== null) store.setPrice(newId, cents, false);
-  closeSheet('addSheet');
+  if (newId) applySheetQtyPrice(newId, cents);
+  closeAddSheet();
   if (store.state.ui.store !== addStore) store.setUI({ store: addStore });
   toast('Added');
   sync?.drain();
@@ -2097,6 +2284,17 @@ function wireEvents() {
   });
 
   // One delegated listener for ~80 rows instead of ~250 node listeners.
+  // THE SECOND HALF OF A DOUBLE-TAP on a sheet that just closed (v40) lands on
+  // whatever was under it - a row's Got button, or the floating + that sits
+  // right under the sheet's Add button and reopened an empty sheet (v40
+  // verifier). Swallowed page-wide, in the capture phase, for 400 ms. A sheet
+  // that is open by then (a question) is left alone.
+  document.addEventListener('click', (e) => {
+    if (Date.now() >= listQuietUntil) return;
+    if (e.target.closest?.('.sheet-bg.open')) return;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
   listEl.addEventListener('click', (e) => {
     const qtyBtn = e.target.closest('[data-qty]');
     if (qtyBtn) {
@@ -2198,11 +2396,19 @@ function wireEvents() {
     $('addPrice').disabled = addByWeight;
     $('addPrice').placeholder = addByWeight ? '' : 'e.g. 3.99';
   };
+  // v40: the name box is also the search. Typing it IS looking for it.
+  $('addName').addEventListener('input', queueMatches);
+  $('addMatches').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-useexisting]');
+    if (b) useExisting(b.dataset.useexisting);
+  });
   $('addStore').addEventListener('click', (e) => {
     const b = e.target.closest('[data-addstore]');
     if (!b) return;
     toggleShop(addShops, b.dataset.addstore, () => {
       [...$('addStore').children].forEach((x) => x.classList.toggle('on', addShops.has(x.dataset.addstore)));
+      // The match buttons name the stores they would add (v40), so they follow.
+      if (!$('addMatches').hidden) paintMatches();
     });
   });
 

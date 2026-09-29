@@ -916,6 +916,20 @@ body.planning.finding:not(.showtabs) #tabs{display:none;}
    centre cannot read (LEDGER M35: a fade is not measured by any ratio), and
    the heading already says these are not on the list. */
 .item.gone{border-left-color:var(--line);}
+/* v40 - the Add sheet's "Already on this list". EACH MATCH IS ONE BUTTON:
+   name, where it is, and what tapping does. The first cut was a card holding a
+   separate button, ~136px a match at Largest - three of them outgrew the
+   sheet. The heading is full ink and full size: it is the one line saying what
+   this panel is (see .prev-head's receipt for a faint heading). `.sheet` in
+   the selector so it outranks the sheet's own centred button rule. */
+.addmatches{margin-top:8px;}
+.addmatches[hidden]{display:none;}
+.amhead{font-size:.92rem; font-weight:700; color:var(--ink); margin-bottom:2px;}
+.sheet .amatch{display:block; width:100%; text-align:left; margin-top:8px; padding:9px 12px;
+  border:1px solid var(--line); line-height:1.35;}
+.amatch > span{display:block;}
+.amname{font-weight:700;}
+.amgo{font-weight:700; color:var(--accent-ink); margin-top:3px;}
 .gonehint{font-size:.8rem; color:var(--muted); margin:-2px 0 8px; line-height:1.5;}
 .empty.slim{padding:18px 14px 6px;}
 .item.flagged{border-left-color:var(--skip);}
@@ -1279,7 +1293,12 @@ html[data-skin="lux"][data-theme="light"]{
 
 <div class="sheet-bg" id="addSheet"><div class="sheet">
   <h2>Add an item</h2>
-  <div class="fld"><label>What is it?</label><input id="addName" placeholder="e.g. paper towels" autocomplete="off" maxlength="120"></div>
+  <!-- v40: the name box is also the search. What matches is listed under it,
+       each with "Use this one", so an item already on the list is put on more
+       stores instead of being typed in twice. Inside the sheet, not the list,
+       so a paint of the list can never take the keyboard away mid-word. -->
+  <div class="fld"><label>What is it?</label><input id="addName" placeholder="e.g. paper towels" autocomplete="off" maxlength="120">
+    <div class="addmatches" id="addMatches" hidden></div></div>
   <div class="fld"><label>Note (size, why, anything else)</label><input id="addNote" placeholder="optional" autocomplete="off" maxlength="300"></div>
   <!-- SEVEN STORES EXIST; A LIST HOLDS FOUR. This picker shows the list's four
        (or however many it has), not the whole pool, and that is on purpose

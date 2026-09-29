@@ -8,7 +8,7 @@
 
 import { DATA } from './data.js';
 import { STATUSES, MIN_QTY, MAX_QTY, MAX_PRICE, SHOP_POOL, LEGACY_SHOPS } from './store.js';
-import { matcher } from './find.js';
+import { matcher, fold } from './find.js';
 
 export const flagKey = (itemId, storeId) => itemId + '@' + storeId;
 
@@ -939,19 +939,195 @@ export function listHTML(state, opts = {}) {
 }
 
 /**
+ * What the Add sheet offers INSTEAD of a duplicate (v40): everything on this
+ * list matching what is being typed, from every tab, shown or taken off, best
+ * match first. The same matcher as "Choose what to buy", so the two searches
+ * agree about what "chiken" means.
+ *
+ * One entry per ITEM, not per tab: a both-club row is one thing to buy, and
+ * listing it twice would invite choosing "the other one". `shops` names every
+ * tab it is on, by the list's own short names.
+ *
+ * THIS LIST ONLY, by construction - it reads the same per-list state as
+ * `buildGroups` and `takenOff` (see `takenOff` for the four gates).
+ *
+ * Nothing under two letters: one letter matches the start of half the
+ * catalogue, and a wall of "Already on this list" under a single keystroke is
+ * noise that pushes the store buttons off the screen.
+ */
+export function existingMatches(state, query) {
+  if (fold(query).replace(/ /g, '').length < 2) return [];
+  const match = matcher(query);
+  if (!match) return [];
+  // SCORED PER TAB'S COPY, BEST KEPT. A both-club catalogue row carries
+  // different small print on each tab - Member's Mark at Sam's, Kirkland at
+  // Costco - so one score per id, taken from whichever tab came first, missed
+  // every word that only the other tab's copy has. "kirkland" found 2 items
+  // instead of 16, and "Kirkland chicken thighs" was typed in as a duplicate
+  // (v40 verifier, run; the review's "identical result" claim was wrong). The
+  // cache is keyed by what is actually scored, so the saving it was for holds
+  // wherever two copies really are the same text.
+  const scores = new Map();
+  const found = new Map();
+  for (const { it, shop, gone } of listRows(state)) {
+    const key = `${it.id}\u0000${it.name}\u0000${it.detail || ''}\u0000${it.why || ''}`;
+    let score = scores.get(key);
+    if (score === undefined) { score = scoreOf(match, it); scores.set(key, score); }
+    if (!score) continue;
+    let e = found.get(it.id);
+    if (e && score > e.score) e.score = score;
+    if (!e) {
+      // The tick, for a row still on the list. Somebody adding "milk" while
+      // Milk is ticked Got this trip needs to be told, not quietly handed a
+      // row that Hide done keeps hidden (v40 reviews, both). A taken-off row's
+      // old tick is cleared when it comes back, so it is not shown.
+      const st = gone ? '' : (STATUSES.includes(state.items?.[it.id]?.s) ? state.items[it.id].s : '');
+      // A taken-off row has no tab showing it, so its HOME shops come from
+      // its record, or the catalogue's rule for a row with none - which is
+      // where `putBack` will return it. `useLabel` needs them to name any
+      // store the sheet would add on top (browser check, v40: a row came back
+      // "on Sam's and Other" under a button that said only "Put it back").
+      const home = !gone ? []
+        : state.added?.[it.id] ? shopsOf(state.added[it.id]) : firstRecordShops(state, it.id);
+      e = { id: it.id, name: it.name, shops: [], shopIds: home, gone, status: st, score };
+      found.set(it.id, e);
+    }
+    if (!gone && !e.shopIds.includes(shop.id)) { e.shops.push(shop.short); e.shopIds.push(shop.id); }
+  }
+  // `sort` is stable, so equal scores keep tab order.
+  return [...found.values()].sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Every row this list holds, tab by tab - shown, then taken off - with the tab
+ * it was found on. ONE walk for the three things that need "everything on
+ * this list": the Add sheet's matches, its duplicate check, and the
+ * search's "found on another tab". The per-list rule lives here once, rather
+ * than in three loops that would drift (v40 composition review).
+ */
+function* listRows(state) {
+  for (const shop of shopsFor(state)) {
+    for (const g of buildGroups(state, shop.id)) for (const it of g.items) yield { it, shop, gone: false };
+    for (const it of takenOff(state, shop.id)) yield { it, shop, gone: true };
+  }
+}
+
+/** "Sam's", "Sam's and Costco", "Sam's, Costco and Target" - read aloud, a
+ *  comma list is a stumble; "and" is how a person says it. */
+export function joinAnd(xs) {
+  if (xs.length < 2) return xs[0] || '';
+  return `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+}
+
+/**
+ * One item as the Add sheet sees it - where it is shown, or where it would come
+ * back to - whatever was typed. `existingMatches` returns nothing under two
+ * letters, so the duplicate question built its label from an empty shop list
+ * and offered to put a one-letter item "on Sam's too" while it was already
+ * there (v40 verifier, run). Null if the item is not on this list at all.
+ */
+export function itemAsMatch(state, id) {
+  let e = null;
+  for (const { it, shop, gone } of listRows(state)) {
+    if (it.id !== id) continue;
+    if (!e) {
+      e = { id, name: it.name, shops: [], shopIds: [], gone, status: '' };
+      if (gone) e.shopIds = state.added?.[id] ? shopsOf(state.added[id]) : firstRecordShops(state, id);
+      else e.status = STATUSES.includes(state.items?.[id]?.s) ? state.items[id].s : '';
+    }
+    if (!gone && !e.shopIds.includes(shop.id)) { e.shops.push(shop.short); e.shopIds.push(shop.id); }
+  }
+  return e;
+}
+
+/**
+ * An item on this list with EXACTLY this name, folded - "milk" is "Milk", and
+ * "sams choice" is "Sam's choice" - or null. What the Add button asks about
+ * before writing a second copy. Deliberately exact, not fuzzy: a near match is
+ * a question for the list of matches, not a reason to stop somebody adding
+ * "Milk (oat)" beside "Milk".
+ *
+ * A LIVE ONE FIRST. After somebody has chosen "Add a second one" there can be
+ * a live copy and a taken-off copy; answering with the taken-off one said "It
+ * was taken off" while an identical item sat on the list (v40 review).
+ */
+export function sameNameAs(state, name) {
+  const want = fold(plainName(name));
+  if (!want) return null;
+  let taken = null;
+  for (const { it, gone } of listRows(state)) {
+    if (fold(plainName(it.name)) !== want) continue;
+    if (!gone) return { id: it.id, name: it.name, gone: false };
+    if (!taken) taken = { id: it.id, name: it.name, gone: true };
+  }
+  return taken;
+}
+
+/**
+ * WHAT TAPPING IT WILL DO, as the words on it - for the match button and the
+ * duplicate question's yes, so the two can never call one action two names.
+ *
+ * The effect depends on the store buttons, which sit further down the sheet
+ * and are usually off screen when this is tapped, so a bare "Use this one"
+ * acted on something the person could not see (v40 ethos review). Naming the
+ * stores it adds is also its blast radius: it is additive, and it says exactly
+ * what every phone will show.
+ */
+export function useLabel(state, m, chosen) {
+  const shops = shopsFor(state);
+  const extra = [...(chosen || [])].filter((id) => !(m.shopIds || []).includes(id))
+    .map((id) => (shops.find((s) => s.id === id) || {}).short).filter(Boolean);
+  if (m.gone) return extra.length ? `Put it back, on ${joinAnd(extra)} too` : 'Put it back';
+  return extra.length ? `Put it on ${joinAnd(extra)} too` : 'Use this one';
+}
+
+const STATUS_WORDS = { got: 'already ticked Got', swap: 'already marked Swap', skip: 'already marked Skip' };
+
+/** The same words, for a toast after it has happened. */
+export function statusWords(st) { return STATUS_WORDS[st] || ''; }
+
+/**
+ * The matches under the Add sheet's name box.
+ *
+ * EACH MATCH IS ONE BUTTON - name, where it is, and what tapping does - rather
+ * than a card with a button in it. Measured at Largest (21px root) on 320px,
+ * the card-plus-button was ~136px a match and the panel of three ~515px:
+ * taller than the whole sheet, with no button above a phone keyboard. One
+ * button is ~50px shorter a match and a far bigger target. `max` is two at
+ * Largest (main.js decides; this module does not read the page).
+ */
+export function matchesHTML(state, found, { chosen, max = 3 } = {}) {
+  if (!found.length) return '';
+  const rows = found.slice(0, max).map((m) => {
+    const name = plainName(m.name).trim() || 'Unnamed item';
+    const tick = m.status ? ` &middot; ${STATUS_WORDS[m.status]}` : '';
+    const where = m.gone ? 'Taken off this list' : `On ${esc(joinAnd(m.shops))}${tick}`;
+    return `<button type="button" class="amatch" data-useexisting="${esc(m.id)}">`
+      + `<span class="amname">${esc(name)}</span><span class="det">${where}</span>`
+      + `<span class="amgo">&rarr; ${esc(useLabel(state, m, chosen))}</span></button>`;
+  }).join('');
+  const more = found.length > max
+    ? `<div class="hint">&hellip;and ${found.length - max} more. Keep typing to narrow it down.</div>` : '';
+  // Short, and in full ink: it is the one line saying what this panel is, and
+  // the buttons already say what to do (v40 ethos review; `.prev-head` in
+  // index.html carries the receipt for a faint heading like the first cut's).
+  return `<div class="amhead">Already on this list:</div>${rows}${more}`;
+}
+
+/**
  * NEVER A DEAD END (§3). A search that finds nothing on this tab may be
  * finding it on another one - an item filed at Costco is invisible from the
  * Sam's tab - so say where, by the tab's own name, and how many.
  */
 function elsewhereHint(state, storeId, match) {
   const where = [];
-  for (const s of shopsFor(state)) {
-    if (s.id === storeId) continue;
-    const ids = new Set();
-    for (const g of buildGroups(state, s.id)) for (const i of g.items) if (scoreOf(match, i) > 0) ids.add(i.id);
-    for (const i of takenOff(state, s.id)) if (scoreOf(match, i) > 0) ids.add(i.id);
-    if (ids.size) where.push(`${esc(s.short)} (${ids.size})`);
+  const per = new Map();
+  for (const { it, shop } of listRows(state)) {
+    if (shop.id === storeId || !(scoreOf(match, it) > 0)) continue;
+    if (!per.has(shop.id)) per.set(shop.id, { shop, ids: new Set() });
+    per.get(shop.id).ids.add(it.id);
   }
+  for (const { shop, ids } of per.values()) where.push(`${esc(shop.short)} (${ids.size})`);
   // `.elsewhere` is read by main.js: the header hides the tabs while the
   // keyboard is up, and this sentence tells the reader to tap one.
   return where.length

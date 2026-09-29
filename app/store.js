@@ -621,6 +621,31 @@ export function createStore({ ns = 'household' } = {}) {
 
   function stamp(rec) { return { ...rec, t: tick(), c: state.me.id }; }
 
+  /**
+   * `stamp`, for a write that REPLACES an existing record: always above it.
+   *
+   * A record stamped by a phone over a day fast sits where no honest `tick()`
+   * can reach (`observeClock` refuses to follow it), so a plain `stamp` over it
+   * loses on every phone that holds it - shown here, reverted everywhere,
+   * behind a toast saying it worked. One past it, on THIS record only: it is
+   * already out of honest reach, so this makes nothing worse, and the shared
+   * clock is untouched (`unemptyList`'s argument, one record wide).
+   *
+   * ONE HELPER, used by every write that replaces an `added` record, and that
+   * is the receipt twice over. v39 put the bump in `putBack` alone; v40's "Use
+   * this one" wrote a second edit through `upsertAdded` and the record's `t`
+   * went ~25h BACKWARDS (v40 correctness review). Moving it into `upsertAdded`
+   * still left `removeAdded` and `restoreHidden` on a plain `stamp`, so a
+   * Remove of a just-put-back item lost everywhere and it came back silently
+   * (v40 verifier, run). Other kinds (a tick, a quantity) have the same shape
+   * and are not covered here - recorded in LEDGER M43.
+   */
+  function stampOver(cur, rec) {
+    const r = stamp(rec);
+    if (cur && typeof cur.t === 'number' && Number.isFinite(cur.t) && r.t <= cur.t) r.t = cur.t + 1;
+    return r;
+  }
+
   function setStatus(itemId, status, note) {
     const prev = state.items[itemId];
     const rec = stamp({
@@ -719,7 +744,7 @@ export function createStore({ ns = 'household' } = {}) {
     // failed only on the last removal, which is the common one. §1: a tap that
     // appears to work and does not is worse than an error.
     const { also: _drop, ...rest } = (cur || {});
-    state.added[id] = stamp({
+    state.added[id] = stampOver(cur, {
       ...rest,
       name,
       note: String(patch.note ?? cur?.note ?? ''),
@@ -729,6 +754,7 @@ export function createStore({ ns = 'household' } = {}) {
       by: cur?.by || state.me.name,
       ...(patch.cat ? { cat: 1 } : {}),
     });
+    // `stampOver`, above: an edit always outranks the record it edits.
     state.outbox[obKey('added', id)] = 'added';
     persist();
     emit({ type: 'added' });
@@ -766,7 +792,7 @@ export function createStore({ ns = 'household' } = {}) {
     for (const id of Object.keys(state.added)) {
       const r = state.added[id];
       if (!r || !r.cat || !r.del) continue;
-      state.added[id] = stamp({ ...r, del: false });
+      state.added[id] = stampOver(r, { ...r, del: false });
       state.outbox[obKey('added', id)] = 'added';
       n++;
     }
@@ -842,17 +868,40 @@ export function createStore({ ns = 'household' } = {}) {
         patch.also = [];
       }
     }
-    if (!upsertAdded(id, patch)) return 'failed';
-    // A TAKE-OFF FROM A PHONE OVER A DAY FAST is stamped where no honest
-    // `tick()` can reach (`observeClock` refuses to follow it), so the write
-    // above would show locally and lose on every phone that already holds the
-    // fast record - a "Put back" toast over a revert (v39 verifier, run). One
-    // tick past it, on THIS record only: it is already out of honest reach,
-    // so this makes nothing worse, and the shared clock is not touched -
-    // `unemptyList`'s argument, applied to the one record in the way.
-    const mine = state.added[id];
-    if (cur && typeof cur.t === 'number' && mine.t <= cur.t) mine.t = cur.t + 1;
-    return 'back';
+    // A take-off from a phone over a day fast is outranked inside
+    // `upsertAdded` - see there for why it moved (v40).
+    return upsertAdded(id, patch) ? 'back' : 'failed';
+  }
+
+  /**
+   * Make sure an item is on AT LEAST these shops - the Add sheet's "Use this
+   * one" (v40), which is how a second store is added without a second copy.
+   *
+   * ONLY EVER ADDS. The shops it already has are kept, decided 2026-09-29: a
+   * sheet for adding things must never be the way an item quietly leaves a tab
+   * somebody else shops from (§1). Removing a shop stays in the Edit sheet,
+   * where the person can see what they are unticking.
+   *
+   * WRITES NOTHING when there is nothing to add. That matters most for a
+   * catalogue row with no record: it already shows on its catalogue tabs, and
+   * writing a first record just to say so would only pin it (M41, M25). When a
+   * shop IS added to such a row, `fresh` supplies its first record - built by
+   * `view.firstRecordShops`, the one rule for that - with the new shop added.
+   *
+   * Only real shop ids are accepted, the same gate `alsoField` applies, and a
+   * record whose own `store` is not one (untrusted, §4) takes the first real
+   * one as its primary rather than keeping the junk in front.
+   */
+  function ensureOnShops(id, shops, fresh) {
+    const cur = state.added[id];
+    const base = cur ? [cur.store, ...(Array.isArray(cur.also) ? cur.also : [])]
+      : fresh?.store ? [fresh.store, ...(Array.isArray(fresh.also) ? fresh.also : [])] : null;
+    if (!base) return false;
+    const want = base.filter((s) => SHOP_IDS.includes(s));
+    for (const s of shops || []) if (SHOP_IDS.includes(s) && !want.includes(s)) want.push(s);
+    if (!want.length || want.length === base.filter((s) => SHOP_IDS.includes(s)).length) return false;
+    const patch = { store: want[0], also: want.slice(1) };
+    return upsertAdded(id, cur ? patch : { ...fresh, ...patch });
   }
 
   /* ---- empty the list for everyone: the shared half of "delete a list" ---- */
@@ -965,7 +1014,7 @@ export function createStore({ ns = 'household' } = {}) {
     const cur = state.added[id];
     if (!cur && !opts.cat) return;
     const store = String(opts.store || 'sams');
-    state.added[id] = stamp({
+    state.added[id] = stampOver(cur, {
       ...(cur || { name: String(opts.name || ''), note: '', store, ...alsoField(opts.also, store), by: state.me.name }),
       del: true,
       ...(opts.cat || cur?.cat ? { cat: 1 } : {}),
@@ -1602,7 +1651,7 @@ export function createStore({ ns = 'household' } = {}) {
 
   return {
     state, subscribe, emit,
-    setStatus, addItem, editAdded, upsertAdded, removeAdded, restoreHidden, hiddenCount, putBack,
+    setStatus, addItem, editAdded, upsertAdded, removeAdded, restoreHidden, hiddenCount, putBack, ensureOnShops,
     emptyList, unemptyList, sweptAt, clearAllMarks, setUI, setName,
     hasPlan, isPlanned, setPlanned, clearPlan, replanFromLastTrip,
     getQty, setQty, bumpQty,
